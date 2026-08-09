@@ -30,7 +30,16 @@
     ns_prefix=foo          prefix every generated namespace with `foo.`
     keep_source_info=true  embed SourceCodeInfo (comments/spans) too; off by
                            default because it dominates the payload and is
-                           useless at runtime"
+                           useless at runtime
+    codec_ns=…             namespace providing set-field!/get-field
+    runtime_ns=…           namespace providing file-descriptor/message/field
+    service_ns=…           namespace providing service/methods-map
+
+  The three *_ns options exist because the requires this emits are the real
+  public API: they are written into every generated file, so changing them later
+  breaks any consumer with generated code checked in. Defaults match the runtime
+  library today; overriding them lets a project move to a differently named
+  runtime without waiting for this plugin to be re-released."
   (:require [clojure.string :as str])
   (:import [com.google.protobuf DescriptorProtos$Edition DescriptorProtos$FileDescriptorProto
             DescriptorProtos$DescriptorProto DescriptorProtos$FieldDescriptorProto
@@ -149,6 +158,24 @@
 ;; ---------------------------------------------------------------------------
 ;; emission
 
+(def default-runtime-namespaces
+  "Namespaces the generated code requires.
+
+  Only :service pulls grpc-java onto the classpath; :codec and :runtime are
+  protobuf-only, which is why a message-only file never requires :service."
+  {:codec   "clj-grpc.codec"
+   :runtime "clj-grpc.runtime"
+   :service "clj-grpc.runtime.service"})
+
+(defn- runtime-namespaces
+  "Resolve the emitted requires from plugin parameters, defaults for anything unset."
+  [params]
+  (merge default-runtime-namespaces
+         (into {} (for [[k opt] [[:codec :codec_ns] [:runtime :runtime_ns] [:service :service_ns]]
+                        :let [v (get params opt)]
+                        :when (string? v)]
+                    [k v]))))
+
 (def ^:private b64-chunk-size
   "Maximum characters per emitted string literal.
 
@@ -202,8 +229,13 @@
      :form    (str (proto->ns dep prefix) "/file-descriptor")}))
 
 (defn emit-namespace
-  "Render one .clj file for `fdp`."
-  [^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info?]
+  "Render one .clj file for `fdp`.
+
+  `rt-ns` maps :codec/:runtime/:service to the namespaces the output requires;
+  see default-runtime-namespaces."
+  ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info?]
+   (emit-namespace fdp generated? prefix keep-source-info? default-runtime-namespaces))
+  ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns]
   (let [ns-name (proto->ns (.getName fdp) prefix)
         deps    (mapv #(dep-form % generated? prefix) (.getDependencyList fdp))
         ;; protoc ships SourceCodeInfo — every comment and source span — in the
@@ -249,9 +281,9 @@
     ;; The service runtime lives in the grpc module; requiring it from a
     ;; message-only file would drag grpc-java onto the classpath of a project
     ;; that never asked for RPC. So emit it only when there IS a service.
-    (line (str "  (:require [clj-grpc.codec :as codec]"
-               "\n            [clj-grpc.runtime :as rt]"
-               (when (seq svcs) "\n            [clj-grpc.runtime.service :as rts]")
+    (line (str "  (:require [" (:codec rt-ns) " :as codec]"
+               "\n            [" (:runtime rt-ns) " :as rt]"
+               (when (seq svcs) (str "\n            [" (:service rt-ns) " :as rts]"))
                (str/join "" (for [{:keys [require]} deps :when require]
                               (str "\n            [" require "]")))
                "))"))
@@ -310,11 +342,14 @@
 
     (when (seq svcs)
       (line "")
-      (line ";; services — pass to clj-grpc.server/service; methods to clj-grpc.client")
+      ;; Deliberately does not name the server/client namespaces: they are not
+      ;; among the options this plugin takes, so under an override the guidance
+      ;; would point at namespaces the project does not have.
+      (line ";; services — pass the service value to your server, the methods to a client")
       (doseq [s svcs]
         (line (str "(def " s " (rts/service file-descriptor " (pr-str s) "))"))
         (line (str "(def " (str/lower-case s) "-methods (rts/methods-map " s "))"))))
-    (str sb)))
+    (str sb))))
 
 ;; ---------------------------------------------------------------------------
 ;; plugin protocol
@@ -325,6 +360,7 @@
   (let [params    (parse-params (.getParameter req))
         prefix    (when (string? (:ns_prefix params)) (:ns_prefix params))
         keep-src? (flag? (:keep_source_info params))
+        rt-ns     (runtime-namespaces params)
         to-gen    (set (.getFileToGenerateList req))
         generated? #(contains? to-gen %)
         resp      (PluginProtos$CodeGeneratorResponse/newBuilder)]
@@ -333,7 +369,7 @@
       (let [ns-name (proto->ns (.getName fdp) prefix)]
         (.addFile resp (-> (PluginProtos$CodeGeneratorResponse$File/newBuilder)
                            (.setName (ns->path ns-name))
-                           (.setContent (emit-namespace fdp generated? prefix keep-src?))
+                           (.setContent (emit-namespace fdp generated? prefix keep-src? rt-ns))
                            (.build)))))
     (doto resp
       (.setSupportedFeatures

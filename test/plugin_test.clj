@@ -13,7 +13,7 @@
             [protoc-gen-clojure.plugin :as plugin])
   (:import [com.google.protobuf DescriptorProtos$Edition
             DescriptorProtos$DescriptorProto DescriptorProtos$FileDescriptorProto
-            DescriptorProtos$MessageOptions]
+            DescriptorProtos$MessageOptions DescriptorProtos$ServiceDescriptorProto]
            [com.google.protobuf.compiler PluginProtos$CodeGeneratorRequest
             PluginProtos$CodeGeneratorResponse$Feature]))
 
@@ -122,6 +122,47 @@
     (is (str/includes? out "Outer.Inner") "the nested type is named")
     (is (not (str/includes? out "CountsEntry"))
         "a synthetic map entry must not be reported as a missing type")))
+
+(deftest runtime-namespaces-are-configurable
+  ;; The requires this emits are the real public API — they are written into every
+  ;; generated file, so changing them after a release breaks any consumer with
+  ;; generated code checked in. Configurable means that commitment is reversible.
+  (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                (.setName "demo/thing.proto")
+                (.addMessageType (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                                     (.setName "Thing")))
+                (.addService (-> (DescriptorProtos$ServiceDescriptorProto/newBuilder)
+                                 (.setName "Doer")))
+                (.build))]
+    (testing "defaults are the runtime library's current namespaces"
+      (let [out (plugin/emit-namespace fdp (constantly false) nil false)]
+        (is (str/includes? out "[clj-grpc.codec :as codec]"))
+        (is (str/includes? out "[clj-grpc.runtime :as rt]"))
+        (is (str/includes? out "[clj-grpc.runtime.service :as rts]"))))
+
+    (testing "each can be overridden independently"
+      (let [out (plugin/emit-namespace fdp (constantly false) nil false
+                                       {:codec   "acme.pb.codec"
+                                        :runtime "acme.pb.runtime"
+                                        :service "acme.rpc.service"})]
+        (is (str/includes? out "[acme.pb.codec :as codec]"))
+        (is (str/includes? out "[acme.pb.runtime :as rt]"))
+        (is (str/includes? out "[acme.rpc.service :as rts]"))
+        (is (not (str/includes? out "clj-grpc")) "no default leaks through")))
+
+    (testing "resolution falls back per key, so a partial override is safe"
+      (is (= (assoc plugin/default-runtime-namespaces :codec "only.this")
+             (#'plugin/runtime-namespaces {:codec_ns "only.this"}))))
+
+    (testing "a message-only file never requires the service namespace, since that
+              is the one that pulls grpc-java"
+      (let [msgs-only (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                          (.setName "demo/m.proto")
+                          (.addMessageType (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                                               (.setName "M")))
+                          (.build))
+            out (plugin/emit-namespace msgs-only (constantly false) nil false)]
+        (is (not (str/includes? out "rts")))))))
 
 (deftest naming
   (is (= "acme.greeter.greeter" (plugin/proto->ns "acme/greeter/greeter.proto" nil)))

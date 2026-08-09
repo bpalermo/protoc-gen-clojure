@@ -68,6 +68,6 @@
     (codec/get-field msg HelloReply--message opts)
     )))
 
-;; services — pass to clj-grpc.server/service; methods to clj-grpc.client
+;; services — pass the service value to your server, the methods to a client
 (def Greeter (rts/service file-descriptor "Greeter"))
 (def greeter-methods (rts/methods-map Greeter))

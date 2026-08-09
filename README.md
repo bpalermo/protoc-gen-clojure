@@ -129,6 +129,18 @@ Comma-separated, as `--clojure_out=key=value,key2=value2:DIR`, or via
 |---|---|
 | `ns_prefix=foo` | prefix every generated namespace with `foo.` |
 | `keep_source_info=true` | embed `SourceCodeInfo` (comments and spans). Off by default: it dominates the payload and is useless at runtime. |
+| `codec_ns=…` | namespace providing `set-field!` / `get-field`. Default `clj-grpc.codec`. |
+| `runtime_ns=…` | namespace providing `file-descriptor` / `message` / `field`. Default `clj-grpc.runtime`. |
+| `service_ns=…` | namespace providing `service` / `methods-map`. Default `clj-grpc.runtime.service`. |
+
+The three `*_ns` options exist because **the requires in generated code are this
+plugin's real public API**. They are written into every emitted file, so a project
+with generated code checked in is coupled to those names. Overriding them lets a
+project point at a differently named runtime without waiting on a plugin release.
+
+Only `service_ns` pulls a gRPC runtime onto the classpath; a file declaring no
+service never requires it. So message-only consumers already avoid gRPC — the
+options are about naming, not about dependency weight.
 
 ## Limitations
 
