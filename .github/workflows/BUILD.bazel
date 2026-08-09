@@ -1,0 +1,17 @@
+load("@rules_shell//shell:sh_library.bzl", "sh_library")
+load("//bazel/lint:linters.bzl", "shellcheck_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Invoked by bazel-contrib/.github's release_ruleset workflow, not by Bazel — but
+# it builds the archive BCR consumes, so it is worth linting like anything else.
+sh_library(
+    name = "release_prep",
+    srcs = ["release_prep.sh"],
+)
+
+shellcheck_test(
+    name = "release_prep_lint",
+    srcs = [":release_prep"],
+    tags = ["lint"],
+)

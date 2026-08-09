@@ -3,3 +3,8 @@ bazel-*
 MODULE.bazel.lock
 .DS_Store
 dist/
+
+# release_prep.sh staging (created in CI, never committed)
+artifacts/
+/protoc-gen-clojure-module.tar.gz
+/protoc-gen-clojure_*
