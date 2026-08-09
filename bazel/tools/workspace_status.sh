@@ -28,3 +28,17 @@ if git diff --quiet HEAD 2>/dev/null; then
 else
   echo "STABLE_GIT_DIRTY dirty"
 fi
+
+# Whether this build may move the `latest` image tag.
+#
+# Only a stable version does. A prerelease (0.1.0-rc1) must not move `latest`, or
+# `docker pull …:latest` hands someone a release candidate.
+#
+# The value is the literal tag or the string "none" rather than true/false, because
+# Go templates treat any non-empty string as truthy — "false" would read as true and
+# the guard would silently do nothing.
+case "${version:-}" in
+  *-*) echo "STABLE_MOVING_TAG none" ;;
+  "") echo "STABLE_MOVING_TAG none" ;;
+  *) echo "STABLE_MOVING_TAG latest" ;;
+esac

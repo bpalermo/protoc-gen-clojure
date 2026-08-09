@@ -143,7 +143,11 @@ image_push(
     tag_list = [
         "{{.STABLE_VERSION}}",
         "{{.STABLE_GIT_COMMIT}}",
-        "latest",
+        # `latest` moves only for a stable version. A prerelease must not claim it,
+        # or `docker pull …:latest` hands someone a release candidate. The version
+        # and commit tags are immutable and identify the artifact on their own, so
+        # this only governs the convenience pointer.
+        "{{if eq .STABLE_MOVING_TAG \"latest\"}}latest{{end}}",
     ],
     tags = ["manual"],
     target_compatible_with = ["@platforms//os:linux"],
