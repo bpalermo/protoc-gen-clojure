@@ -21,6 +21,24 @@ load("@protobuf//bazel/common:proto_info.bzl", "ProtoInfo")
 
 TOOLCHAIN_TYPE = "@protoc_gen_clojure//bazel:toolchain_type"
 
+# protobuf's own toolchain type for protoc, and the only route to a PREBUILT
+# protoc. This rule used to depend on `@protobuf//:protoc` directly, which is a
+# plain cc_binary: that meant compiling protoc from C++ source — ~70 translation
+# units — to run a tool upstream already publishes prebuilt for every platform we
+# support, and no protobuf flag can redirect a cc_binary label.
+#
+# Resolving the toolchain instead makes the choice the build's, via
+# --@protobuf//bazel/toolchains:prefer_prebuilt_protoc. The toolchain resolves
+# either way and carries the source-built protoc when that flag is off, so this is
+# not an opt-in path with a fallback: it is the only path. Verified by temporarily
+# failing in a fallback branch and confirming no flag combination reached it.
+#
+# The label sits under bazel/private but is declared `//visibility:public`. That is
+# the supported entry point today — protobuf's own rules resolve the same type
+# through bazel/private/toolchain_helpers.bzl — but the package name is fair warning
+# that it may move, so a protobuf upgrade should re-check it.
+PROTO_TOOLCHAIN_TYPE = "@protobuf//bazel/private:proto_toolchain_type"
+
 def _plugin(ctx):
     """The plugin executable: an explicit `plugin` attr wins, else the toolchain.
 
@@ -51,6 +69,9 @@ def _plugin(ctx):
 def _clojure_proto_library_impl(ctx):
     proto_info = ctx.attr.proto[ProtoInfo]
     plugin, plugin_files = _plugin(ctx)
+
+    # A FilesToRunProvider, so it carries protoc's own runfiles.
+    protoc = ctx.toolchains[PROTO_TOOLCHAIN_TYPE].proto.proto_compiler
 
     outs = ctx.outputs.outs
     if not outs:
@@ -90,12 +111,15 @@ def _clojure_proto_library_impl(ctx):
 
     ctx.actions.run(
         arguments = [args],
-        executable = ctx.executable._protoc,
+        executable = protoc,
         inputs = depset(transitive = [proto_info.transitive_descriptor_sets]),
         mnemonic = "ClojureProtoGen",
         outputs = outs,
         progress_message = "Generating Clojure for %{label}",
-        tools = depset([ctx.executable._protoc], transitive = [plugin_files]),
+        # protoc is not listed here: passing a FilesToRunProvider as `executable`
+        # already contributes the binary and its runfiles. Only the plugin needs
+        # declaring, and it needs its runfiles too — see _plugin.
+        tools = plugin_files,
     )
 
     return [DefaultInfo(files = depset(outs))]
@@ -103,7 +127,14 @@ def _clojure_proto_library_impl(ctx):
 clojure_proto_library = rule(
     implementation = _clojure_proto_library_impl,
     doc = "Generate Clojure sources from a proto_library using protoc-gen-clojure.",
-    toolchains = [config_common.toolchain_type(TOOLCHAIN_TYPE, mandatory = False)],
+    toolchains = [
+        config_common.toolchain_type(TOOLCHAIN_TYPE, mandatory = False),
+        # Mandatory, unlike the plugin toolchain above: protobuf registers this one
+        # itself, so there is nothing for a consumer to set up, and Bazel's own
+        # "no matching toolchains" error names the type more clearly than a
+        # hand-written fallback could.
+        config_common.toolchain_type(PROTO_TOOLCHAIN_TYPE, mandatory = True),
+    ],
     attrs = {
         "proto": attr.label(
             doc = "The proto_library to generate from.",
@@ -124,11 +155,6 @@ clojure_proto_library = rule(
         "plugin": attr.label(
             doc = "Override the protoc-gen-clojure executable. Defaults to the " +
                   "registered toolchain's prebuilt binary.",
-            cfg = "exec",
-            executable = True,
-        ),
-        "_protoc": attr.label(
-            default = Label("@protobuf//:protoc"),
             cfg = "exec",
             executable = True,
         ),
