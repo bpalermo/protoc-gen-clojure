@@ -224,9 +224,6 @@ jobs:
           repository-cache: true
           cache-save: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: musl toolchain (the image contains the static Linux binary)
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends musl-tools zlib1g-dev
-
       # rules_img reads credentials from the Docker config; this writes it without
       # needing a Docker daemon for the push itself.
       - uses: docker/login-action@v3
