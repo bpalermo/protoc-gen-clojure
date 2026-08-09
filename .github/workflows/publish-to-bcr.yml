@@ -34,6 +34,20 @@ jobs:
       # A fork of bazelbuild/bazel-central-registry that the token can push a
       # branch to; the PR is opened from there against upstream.
       registry_fork: bpalermo/bazel-central-registry
+      # A prerelease pushes the entry branch to the fork but stops short of the
+      # upstream pull request. Two reasons, both about the fact that the PR is
+      # against a repository we do not own:
+      #
+      #   - BCR is add-only. A merged 0.1.0-rc1 entry is permanent, and nobody
+      #     wants a release candidate in the registry they resolve deps from.
+      #   - Rehearsing the pipeline must not spend BCR reviewers' attention. Every
+      #     step up to the PR is exercised either way — token auth against the
+      #     fork, asset download from the draft release, attestation verification,
+      #     entry generation — so the rehearsal loses nothing.
+      #
+      # With this false the upstream action emits a URL for opening the PR by hand,
+      # which is the escape hatch if a prerelease ever does need publishing.
+      open_pull_request: ${{ !contains(inputs.tag_name, '-') }}
       # The PAT lives in the `bcr-publish` deployment environment, whose policy
       # allows only tags matching v*, so a pull request cannot reach it. The
       # environment must be passed as an INPUT: a `uses:` job cannot declare
