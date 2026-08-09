@@ -6,18 +6,18 @@
 # adoption and maturity. This file exists so that request is a formality rather
 # than a project.
 #
-# A remote plugin also needs a container image. It IS built now, by
-# //bazel/dev:image with rules_img — no Docker daemon, and the native binary comes
-# straight from the build graph. It is deliberately not pushed: there is nowhere to
-# push it until public plugin publishing is possible. //bazel/dev:push carries the
-# destination and is tagged manual.
+# A remote plugin also needs a container image. It is built by //bazel/dev:image
+# with rules_img — no Docker daemon, and the native binary comes straight from the
+# build graph — and pushed to ghcr.io on release by //bazel/dev:push. GHCR is not a
+# BSR, so this metadata is still unused; the image existing at a stable, stamped
+# location is what makes the request above a formality.
 #
 # The plugin does qualify technically: the BSR sandbox requires a remote plugin
 # to be a pure function of the CodeGeneratorRequest — no filesystem, no network,
 # no environment — which //test:sandbox_conformance_test enforces.
 version: v1
 name: buf.build/bpalermo/clojure
-plugin_version: v0.1.0
+plugin_version: v0.1.0-rc1
 source_url: https://github.com/bpalermo/protoc-gen-clojure
 description: Generates Clojure records, codecs and gRPC service descriptors.
 output_languages:
