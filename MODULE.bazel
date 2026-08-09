@@ -37,6 +37,32 @@ bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
 # differences between a local run and CI.
 bazel_dep(name = "rules_pkg", version = "1.3.0", dev_dependency = True)
 
+# The container image for BSR remote plugin execution (//bazel/dev:image).
+# rules_img rather than a Dockerfile: hermetic, no Docker daemon, and it consumes
+# the native binary straight from the build graph.
+#
+# dev_dependency, together with the pull below — a consumer never builds images,
+# and a non-dev repo rule referencing a dev-only module would make @rules_img
+# invisible to them and break module resolution outright.
+bazel_dep(name = "rules_img", version = "0.3.19", dev_dependency = True)
+
+pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
+
+# base-debian12, not static-debian12: GraalVM's Linux output is dynamically linked,
+# so the image needs glibc. `static` has none, which is what made the old
+# `FROM scratch` Dockerfile unable to start the plugin at all.
+#
+# Pinned by digest because a tag is mutable; `latest` here only records where the
+# digest came from.
+pull(
+    name = "distroless_base",
+    dev_dependency = True,
+    digest = "sha256:62730825d3cf03571e0a1b8f014748de94d0404500f063593b614c23da38841d",
+    registry = "gcr.io",
+    repository = "distroless/base-debian12",
+    tag = "latest",
+)
+
 # write_source_files: the golden-file pattern as a rule. Replaces a hand-rolled
 # pair of scripts that did the same diff-and-update dance, including my own
 # guards against a vacuously passing comparison.

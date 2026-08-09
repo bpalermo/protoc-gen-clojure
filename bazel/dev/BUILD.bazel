@@ -6,6 +6,9 @@ BUILD-loading time. Nothing in this package is published.
 """
 
 load("@aspect_rules_lint//format:defs.bzl", "format_multirun", "format_test")
+load("@rules_img//img:image.bzl", "image_manifest")
+load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
+load("@rules_img//img:push.bzl", "image_push")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
 
 # Formatters, which are the "fix it for me" half of lint:
@@ -73,4 +76,57 @@ pkg_tar(
     # Workspace-relative paths inside the archive. "/" means the workspace root
     # rather than this package, which matters now that this lives in //bazel/dev.
     strip_prefix = "/",
+)
+
+# ---------------------------------------------------------------------------
+# The container image for BSR remote plugin execution.
+#
+# The BSR runs remote plugins as containers. This is built but not pushed: public
+# plugin publishing on buf.build is not self-serve, so there is nowhere to push it
+# yet (see buf.plugin.yaml). Building it in CI is still worth it — it proves the
+# artifact composes, which a Dockerfile nobody built did not.
+#
+# The binary comes straight from the build graph. That was the blocker when this
+# was first attempted: native-image ran outside Bazel then, so an image rule would
+# have had to consume a staged file and could not be built from a clean checkout.
+image_layer(
+    name = "plugin_layer",
+    srcs = {"/protoc-gen-clojure": "//src/protoc_gen_clojure:protoc_gen_clojure"},
+    file_metadata = {
+        # protoc execs it, so the executable bit is not optional.
+        "/protoc-gen-clojure": file_metadata(mode = "0755"),
+    },
+    # Same reason as the manifest: this is where the host-native binary would get
+    # packaged, so the constraint belongs here too.
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+image_manifest(
+    name = "image",
+    base = "@distroless_base",
+    # [] explicitly UNSETS the cmd inherited from the base, rather than leaving it
+    # to be inherited. The plugin takes no arguments: it reads a
+    # CodeGeneratorRequest on stdin and writes the response to stdout, which is the
+    # whole protocol, and is also why it satisfies the BSR sandbox.
+    cmd = [],
+    entrypoint = ["/protoc-gen-clojure"],
+    layers = [":plugin_layer"],
+    # Declared, not inherited. The image was already incompatible on macOS, but
+    # only incidentally — the constraint came from the pulled base's platform. If
+    # the base were ever swapped for a multi-platform index that protection would
+    # vanish silently, and the result would be a host-native (darwin) binary
+    # packaged into a Linux image: something that builds, pushes, and then cannot
+    # run. GraalVM cannot cross-compile, so a Linux binary requires a Linux host.
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+# Not wired into any workflow: there is no destination yet. Kept so the push path
+# is reviewed alongside the image rather than invented under time pressure later.
+image_push(
+    name = "push",
+    image = ":image",
+    registry = "buf.build",
+    repository = "bpalermo/clojure",
+    tag = "latest",
+    tags = ["manual"],
 )
