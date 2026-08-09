@@ -10,7 +10,7 @@ exports_files(["plugin.clj"])
 clojure_library(
     name = "plugin",
     srcs = ["plugin.clj"],
-    aot = ["clj-grpc.plugin"],
+    aot = ["protoc-gen-clojure.plugin"],
     resource_strip_prefix = "src",
     deps = [
         "@maven//:com_google_protobuf_protobuf_java",
@@ -27,7 +27,7 @@ clojure_library(
 # The native binary IS built by Bazel: see :protoc_gen_clojure below.
 clojure_binary(
     name = "protoc_gen_clojure_jvm",
-    main_class = "clj_grpc.plugin",
+    main_class = "protoc_gen_clojure.plugin",
     deps = [
         ":plugin",
         "@maven//:com_google_protobuf_protobuf_java",

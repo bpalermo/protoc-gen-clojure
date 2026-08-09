@@ -12,7 +12,7 @@ generate a `.clj` file.
 
 | Path | What lives there |
 | --- | --- |
-| `src/clj_grpc/plugin.clj` | The whole plugin: request parsing, naming, emitter, `-main`. |
+| `src/protoc_gen_clojure/plugin.clj` | The whole plugin: request parsing, naming, emitter, `-main`. |
 | `bazel/defs.bzl` | `clojure_proto_library` (the public rule) and `proto_transitive_descriptor_sets`. |
 | `bazel/toolchain.bzl` | `protoc_gen_clojure_toolchain` — carries the plugin executable. |
 | `bazel/extensions.bzl` | Module extension that downloads the prebuilt release binaries. |
@@ -36,10 +36,10 @@ bazel test  //test:golden_test             # emission regression
 bazel test  //test:sandbox_conformance_test # BSR purity check
 bazel run   //test:update_golden           # refresh goldens after an intended change
 
-bazel build //src/clj_grpc:protoc_gen_clojure_jvm  # JVM launcher (fast, used by tests)
+bazel build //src/protoc_gen_clojure:protoc_gen_clojure_jvm  # JVM launcher (fast, used by tests)
 bazel build //test/proto:generated                 # see what the emitter produces
 
-bazel build //src/clj_grpc:protoc_gen_clojure      # native binary (GraalVM, ~25s)
+bazel build //src/protoc_gen_clojure:protoc_gen_clojure      # native binary (GraalVM, ~25s)
 bazel test  //test:distribution_test               # run it under real protoc + buf
 ```
 
@@ -49,7 +49,7 @@ The plugin speaks the protoc plugin protocol on stdin/stdout, so you can also
 drive it by hand:
 
 ```sh
-protoc --plugin=protoc-gen-clojure=$(bazel cquery --output=files //src/clj_grpc:protoc_gen_clojure_jvm) \
+protoc --plugin=protoc-gen-clojure=$(bazel cquery --output=files //src/protoc_gen_clojure:protoc_gen_clojure_jvm) \
        --clojure_out=/tmp/out foo.proto
 ```
 
@@ -90,7 +90,7 @@ exist at tag time. The release workflow builds them, rewrites this file, and
 publishes its own source archive; `.bcr/source.template.json` points at that
 asset instead of GitHub's auto-generated tarball. Consequence: a consumer must
 depend on a *released* version. From a git checkout, pass
-`//src/clj_grpc:protoc_gen_clojure_jvm` to `clojure_proto_library`'s `plugin`
+`//src/protoc_gen_clojure:protoc_gen_clojure_jvm` to `clojure_proto_library`'s `plugin`
 attr instead of relying on the toolchain — which is exactly what
 `//test/proto:generated` does.
 
@@ -140,11 +140,14 @@ etc.). `.bazelrc` also pins `--tool_java_language_version=21`, without which
   service — otherwise a message-only file would drag grpc-java onto the
   classpath of a project that never asked for RPC.
 
-## Why the namespace is `clj-grpc.plugin`
+## Why the namespace is `protoc-gen-clojure.plugin`
 
-Because that's what it generates code *for*: emitted files require
-`clj-grpc.codec` and `clj-grpc.runtime`. This repo is clj-grpc's codegen,
-distributed separately so protoc/buf users need neither the gRPC runtime nor a
-JVM — the same relationship `protoc-gen-go` has with its runtime module.
-Behavioural tests of the *emitted* code live in clj-grpc, which owns that
-runtime; keeping them there is what makes the two module graphs acyclic.
+The generator is named after itself, not after the runtime it targets. Emitted
+files require `clj-grpc.codec` and `clj-grpc.runtime`, but those belong to a
+separate artifact; conflating the two made this repo read as though it were part of
+clj-grpc. `protoc-gen-go` is the same shape — its own package is
+`cmd/protoc-gen-go`, not the runtime package whose imports it emits.
+
+Behavioural tests of the *emitted* code live with that runtime, which owns it;
+keeping them there is what lets this module depend on nothing but protobuf-java,
+and what keeps the two module graphs acyclic.

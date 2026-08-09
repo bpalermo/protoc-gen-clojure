@@ -76,7 +76,7 @@ def _toolchains_impl(mctx):
             "bazel/versions.bzl is populated only in a released source archive, so\n" +
             "depend on a released version (BCR or the release tarball) rather than on\n" +
             "a git checkout. To build from source instead, pass\n" +
-            "@protoc_gen_clojure//src/clj_grpc:protoc_gen_clojure_jvm to\n" +
+            "@protoc_gen_clojure//src/protoc_gen_clojure:protoc_gen_clojure_jvm to\n" +
             "clojure_proto_library's `plugin` attribute.",
         )
     platforms = sorted(BINARIES.keys())

@@ -39,12 +39,12 @@ chmod +x "$STAGE"/*
 # binaries do.
 bazel run //bazel/tools:pin_versions -- "$VERSION" "$STAGE" >&2
 
-bazel build //bazel/dev:module_archive //src/clj_grpc:protoc_gen_clojure_jvm_deploy.jar >&2
+bazel build //bazel/dev:module_archive //src/protoc_gen_clojure:protoc_gen_clojure_jvm_deploy.jar >&2
 
 # Assets land at the repo root, where release_ruleset's release_files globs look.
 cp "$(bazel cquery --output=files //bazel/dev:module_archive 2>/dev/null | tail -1)" \
   "protoc-gen-clojure-module.tar.gz"
-cp "$(bazel cquery --output=files //src/clj_grpc:protoc_gen_clojure_jvm_deploy.jar 2>/dev/null | tail -1)" \
+cp "$(bazel cquery --output=files //src/protoc_gen_clojure:protoc_gen_clojure_jvm_deploy.jar 2>/dev/null | tail -1)" \
   "protoc-gen-clojure_${VERSION}.jar"
 cp "$STAGE"/protoc-gen-clojure_* .
 chmod +x protoc-gen-clojure_*_* 2>/dev/null || true

@@ -1,14 +1,15 @@
-(ns clj-grpc.plugin
+(ns protoc-gen-clojure.plugin
   "protoc-gen-clojure — a protoc/buf codegen plugin that emits Clojure.
 
   Lets a Clojure project be an ordinary entry in buf.gen.yaml alongside
   protocolbuffers/go, protocolbuffers/java and the rest, instead of requiring
   hand-written Java interop to reach generated stubs.
 
-  The namespace matches what this generates code FOR: emitted files require
-  clj-grpc.codec and clj-grpc.runtime. The plugin ships separately from that
-  runtime so protoc and buf users need neither it nor a JVM — the same
-  relationship protoc-gen-go has with its runtime module.
+  Emitted files require clj-grpc.codec and clj-grpc.runtime — the runtime this
+  generates code FOR, which is a separate artifact. The generator is named after
+  itself rather than after that runtime, mirroring protoc-gen-go, whose own
+  package is cmd/protoc-gen-go and not the runtime package it emits imports for.
+  Users of protoc or buf need neither the runtime nor a JVM.
 
   EDITIONS POLICY — the thing that sinks most third-party plugins:
 
