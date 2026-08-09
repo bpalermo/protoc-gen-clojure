@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# GHAS requires an explicit least-privilege grant; the default token permissions
+# are otherwise write-heavy for every job in the workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bazel:
+    name: bazel (jdk ${{ matrix.jdk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: ["21", "25"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      # Lint first, and as its own step: it is fast, and a failure here should be
+      # attributable to lint rather than buried among the other tests. These are
+      # ordinary test targets tagged `lint`, so the full run below covers them
+      # too — this step exists for a clear signal, not for enforcement.
+      - name: lint (buf, shellcheck, formatting)
+        run: bazel test //... --test_tag_filters=lint --test_output=errors
+
+      - name: bazel test //...
+        run: |
+          bazel test //... --test_output=errors \
+            --java_runtime_version=remotejdk_${{ matrix.jdk }} \
+            --java_language_version=${{ matrix.jdk }}

@@ -1,0 +1,23 @@
+# The BCR test module, and the proof of the consumption story: this module has
+# NO rules_clojure, NO JVM toolchain and NO GraalVM, yet it generates Clojure
+# from a .proto. It gets there through the prebuilt native binary that
+# protoc_gen_clojure's toolchain extension fetches.
+module(
+    name = "protoc_gen_clojure_example",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "protoc_gen_clojure", version = "0.1.0")
+bazel_dep(name = "protobuf", version = "35.1")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+# Overridden by BCR's presubmit to point at the module under test.
+local_path_override(
+    module_name = "protoc_gen_clojure",
+    path = "../..",
+)
+
+plugin = use_extension("@protoc_gen_clojure//bazel:extensions.bzl", "toolchains")
+use_repo(plugin, "protoc_gen_clojure_toolchains")
+
+register_toolchains("@protoc_gen_clojure_toolchains//:all")

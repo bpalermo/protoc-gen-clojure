@@ -1,0 +1,36 @@
+edition = "2024";
+
+package acme.greeter;
+
+option java_package = "com.acme.greeter";
+
+// Edition 2024 defaults exercised here:
+//   features.field_presence            = EXPLICIT       -> hasName() exists on a singular string
+//   features.enum_type                 = OPEN           -> unknown enum numbers round-trip
+//   features.enforce_naming_style      = STYLE2024      -> lower_snake fields, PascalCase messages
+//   features.default_symbol_visibility = EXPORT_TOP_LEVEL
+//   features.(pb.java).nest_in_file_class = NO          -> top-level com.acme.greeter.HelloRequest
+// and the outer class defaults to GreeterProto (camel-cased filename + "Proto").
+
+enum Greeting {
+  GREETING_UNSPECIFIED = 0;
+  GREETING_HELLO = 1;
+  GREETING_HOWDY = 2;
+}
+
+message HelloRequest {
+  string name = 1;
+  int32 repeat_count = 2;
+  Greeting greeting = 3;
+}
+
+message HelloReply {
+  string message = 1;
+}
+
+service Greeter {
+  rpc SayHello(HelloRequest) returns (HelloReply);
+  rpc SayHelloMany(HelloRequest) returns (stream HelloReply);
+  rpc CollectHellos(stream HelloRequest) returns (HelloReply);
+  rpc Chat(stream HelloRequest) returns (stream HelloReply);
+}

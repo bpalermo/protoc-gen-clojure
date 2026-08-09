@@ -1,0 +1,20 @@
+# Deliberately load-free.
+#
+# This file ships in the published module archive, so anything it loads must be
+# resolvable for a CONSUMER. Every ruleset used for development here is a
+# dev_dependency and therefore absent downstream — a single `load` of one would
+# make @protoc_gen_clojure//:all (and any root-package query) fail during BUILD
+# loading. Development targets live in //bazel/dev, which the archive omits.
+
+package(default_visibility = ["//visibility:public"])
+
+# Referenced by the shellcheck aspect in //bazel/lint:linters.bzl.
+exports_files([
+    # For the shellcheck aspect in //bazel/lint:linters.bzl.
+    ".shellcheckrc",
+    # For //bazel/dev:module_archive, which packages the module for BCR.
+    "MODULE.bazel",
+    "README.md",
+    "LICENSE",
+    "BUILD.bazel",
+])

@@ -1,0 +1,38 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@protoc_gen_clojure//bazel:defs.bzl", "clojure_proto_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+proto_library(
+    name = "hello_proto",
+    srcs = ["example/hello.proto"],
+    strip_import_prefix = "",
+)
+
+# No `plugin` attribute: the binary comes from the registered toolchain, which is
+# the whole point of this example.
+clojure_proto_library(
+    name = "hello_clj",
+    outs = ["example/hello.clj"],
+    proto = ":hello_proto",
+    tags = ["manual"],
+)
+
+sh_test(
+    name = "generated_test",
+    srcs = ["generated_test.sh"],
+    args = ["$(rootpath :hello_clj)"],
+    data = [":hello_clj"],
+    tags = ["manual"],
+)
+
+# For //bazel/dev:module_archive — BCR's presubmit uses this directory as the test module.
+filegroup(
+    name = "srcs",
+    srcs = [
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "example/hello.proto",
+        "generated_test.sh",
+    ],
+    visibility = ["//visibility:public"],
+)

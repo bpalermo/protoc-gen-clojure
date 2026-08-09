@@ -1,0 +1,21 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//bazel/lint:linters.bzl", "shellcheck_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Rewrites bazel/versions.bzl with the sha256 of the released binaries.
+#
+# Still shell, and still outside the build graph, because its inputs are not Bazel
+# artifacts: the binaries are produced by the release matrix and arrive as CI
+# artifacts, so no rule can hash them. It is at least invoked through Bazel now,
+# which is what got it linted.
+sh_binary(
+    name = "pin_versions",
+    srcs = ["pin_versions.sh"],
+)
+
+shellcheck_test(
+    name = "pin_versions_lint",
+    srcs = [":pin_versions"],
+    tags = ["lint"],
+)
