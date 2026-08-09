@@ -2,18 +2,17 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
-  # Manually runnable so the pipeline can be exercised without cutting a real
-  # tag. dry_run stops short of creating the release.
+    tags: ["v*.*.*"]
+  # Manual dispatch for retries. There is deliberately no dry_run any more: the
+  # source archive must be produced by bazel-contrib/.github's release_ruleset
+  # workflow or BCR rejects its attestation, and that workflow always releases.
+  # Rehearse with a prerelease tag instead.
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to build, without the leading v (e.g. 0.1.0)"
+      tag_name:
+        description: "Tag to release, e.g. v0.1.0"
         required: true
-      dry_run:
-        description: "Build and check everything, but publish nothing"
-        type: boolean
-        default: true
+        type: string
 
 permissions:
   contents: read
@@ -22,40 +21,36 @@ jobs:
   # Fail before spending four native builds on a version that misreports itself.
   check:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
-      - id: v
-        name: resolve the version and assert the source agrees
+      - name: the source must agree with the tag
+        env:
+          TAG: ${{ inputs.tag_name || github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            version="${GITHUB_REF#refs/tags/v}"
-          else
-            version="${{ inputs.version }}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          version="${TAG#v}"
           echo "releasing $version"
 
-          # plugin.clj holds the version; a mismatch means the binary would
-          # report something other than its tag.
+          # plugin.clj is what the binary reports as --version.
           declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+"' src/clj_grpc/plugin.clj \
                      | tr -d ' "' | head -1)
           if [ "$declared" != "$version" ]; then
-            echo "::error::plugin.clj declares version '$declared' but the release is '$version'" >&2
+            echo "::error::plugin.clj declares '$declared' but the tag is '$version'" >&2
             exit 1
           fi
 
           # MODULE.bazel's version is what BCR publishes.
           modver=$(grep -oE 'version = "[^"]+"' MODULE.bazel | head -1 | cut -d'"' -f2)
           if [ "$modver" != "$version" ]; then
-            echo "::error::MODULE.bazel declares version '$modver' but the release is '$version'" >&2
+            echo "::error::MODULE.bazel declares '$modver' but the tag is '$version'" >&2
             exit 1
           fi
 
-  # GraalVM cannot cross-compile, so there is one runner per target platform.
+  # GraalVM cannot cross-compile, so one runner per target platform.
   # https://github.com/oracle/graal/issues/407
+  #
+  # These run here rather than inside release_ruleset because that workflow is a
+  # single runner; release_prep.sh picks the binaries up as artifacts.
   native:
     needs: check
     name: ${{ matrix.os_arch }}
@@ -68,13 +63,11 @@ jobs:
             os_arch: linux_x86_64
           - runner: ubuntu-24.04-arm
             os_arch: linux_aarch64
-          # macos-15-intel, not macos-13: that image was retired in December
-          # 2025 and the label can no longer be assigned, so a job requesting it
-          # queues forever rather than failing fast. macos-15-intel is GitHub's
-          # last Intel image and is itself slated to go in Fall 2027 — after
-          # which darwin_x86_64 needs a different answer (cross-build with
-          # -arch x86_64, or drop it). GraalVM cannot cross-compile, so this leg
-          # genuinely requires an Intel host today.
+          # macos-15-intel, not macos-13: that image was retired in December 2025
+          # and the label can no longer be assigned, so a job requesting it queues
+          # forever instead of failing fast. It is GitHub's last Intel image and
+          # goes in Fall 2027, after which darwin_x86_64 needs a cross-build or to
+          # be dropped.
           - runner: macos-15-intel
             os_arch: darwin_x86_64
           - runner: macos-latest
@@ -85,54 +78,43 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          # Just "release": setup-bazel already prefixes every key with the
-          # runner platform (setup-bazel-1-darwin-arm64-disk-..., -linux-x64-...),
-          # so adding matrix.os_arch stated it twice. The four legs still get four
-          # separate caches; Bazel and the action handle that between them.
           disk-cache: release
           repository-cache: true
-          # Same rule as ci.yml: only main writes caches. Two reasons here —
-          # workflow_dispatch can target any branch (a branch dry run already left
-          # 1.7GB of orphaned caches behind), and a real release runs on a TAG ref,
-          # whose caches no future run can ever read. Saving on a tag is pure quota
-          # burn. Tag runs still RESTORE main's caches, since the default branch is
-          # readable from any ref.
+          # Only main writes caches; see ci.yml. A tag ref's caches could never be
+          # read by anything anyway.
           cache-save: ${{ github.ref == 'refs/heads/main' }}
 
-      # The same target CI builds and //test:distribution_test exercises, so the
-      # released binary is produced exactly as the tested one is. GraalVM comes
-      # from the Bazel graph, so there is no SDK to install here.
       - name: build the native binary
-        run: |
-          bazel build //src/clj_grpc:protoc_gen_clojure
-          mkdir -p dist
-          cp bazel-bin/src/clj_grpc/protoc-gen-clojure dist/protoc-gen-clojure
-          chmod +x dist/protoc-gen-clojure
+        run: bazel build //src/clj_grpc:protoc_gen_clojure
 
       # A matrix misconfiguration would otherwise ship four copies of one host
       # build under four different names, and nothing downstream would notice.
       - name: assert the binary is actually for this platform
         run: |
-          file dist/protoc-gen-clojure
+          out=bazel-bin/src/clj_grpc/protoc-gen-clojure
+          file "$out"
           case "${{ matrix.os_arch }}" in
-            linux_x86_64)  file dist/protoc-gen-clojure | grep -q "ELF 64-bit.*x86-64" ;;
-            linux_aarch64) file dist/protoc-gen-clojure | grep -q "ELF 64-bit.*aarch64" ;;
-            darwin_x86_64) file dist/protoc-gen-clojure | grep -q "Mach-O 64-bit.*x86_64" ;;
-            darwin_arm64)  file dist/protoc-gen-clojure | grep -q "Mach-O 64-bit.*arm64" ;;
+            linux_x86_64)  file "$out" | grep -q "ELF 64-bit.*x86-64" ;;
+            linux_aarch64) file "$out" | grep -q "ELF 64-bit.*aarch64" ;;
+            darwin_x86_64) file "$out" | grep -q "Mach-O 64-bit.*x86_64" ;;
+            darwin_arm64)  file "$out" | grep -q "Mach-O 64-bit.*arm64" ;;
           esac
-          echo "OK: ${{ matrix.os_arch }}"
 
-      - name: the binary runs and reports the release version
+      - name: it runs, and reports the release version
+        env:
+          TAG: ${{ inputs.tag_name || github.ref_name }}
         run: |
-          got="$(dist/protoc-gen-clojure --version)"
+          got="$(bazel-bin/src/clj_grpc/protoc-gen-clojure --version)"
           echo "$got"
-          echo "$got" | grep -q "${{ needs.check.outputs.version }}"
+          echo "$got" | grep -q "${TAG#v}"
 
-      - name: rename for release
+      - name: name it for release
+        env:
+          TAG: ${{ inputs.tag_name || github.ref_name }}
         run: |
           mkdir -p out
-          cp dist/protoc-gen-clojure \
-            "out/protoc-gen-clojure_${{ needs.check.outputs.version }}_${{ matrix.os_arch }}"
+          cp bazel-bin/src/clj_grpc/protoc-gen-clojure \
+            "out/protoc-gen-clojure_${TAG#v}_${{ matrix.os_arch }}"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -140,8 +122,7 @@ jobs:
           path: out/*
           if-no-files-found: error
 
-  # End-to-end on the real artifact, under real protoc and real buf, before it is
-  # published rather than after.
+  # The artifact under real protoc and real buf, before anything is published.
   distribution:
     needs: [check, native]
     runs-on: ubuntu-latest
@@ -157,88 +138,45 @@ jobs:
         with:
           bazelisk-cache: true
           repository-cache: true
-          # Same rule as ci.yml: only main writes caches. Two reasons here —
-          # workflow_dispatch can target any branch (a branch dry run already left
-          # 1.7GB of orphaned caches behind), and a real release runs on a TAG ref,
-          # whose caches no future run can ever read. Saving on a tag is pure quota
-          # burn. Tag runs still RESTORE main's caches, since the default branch is
-          # readable from any ref.
           cache-save: ${{ github.ref == 'refs/heads/main' }}
 
-      # The same check //test:distribution_test runs, pointed at the DOWNLOADED
-      # asset rather than a graph artifact. protoc and buf arrive as hermetic
-      # runfiles, so nothing here depends on what the runner has installed.
-      - run: |
+      - env:
+          TAG: ${{ inputs.tag_name || github.ref_name }}
+        run: |
           chmod +x dl/*
-          PLUGIN="$PWD/dl/protoc-gen-clojure_${{ needs.check.outputs.version }}_linux_x86_64" \
+          PLUGIN="$PWD/dl/protoc-gen-clojure_${TAG#v}_linux_x86_64" \
             bazel run //test:distribution_check
 
-  publish:
+  # The release itself goes through bazel-contrib's workflow rather than
+  # `gh release create`. Not a style preference: BCR verifies that a module's
+  # source-archive attestation was signed by bazel-contrib/.github's
+  # release_ruleset workflow and rejects attestations produced any other way, so
+  # building the archive here and attesting it with actions/attest-build-provenance
+  # — which is what this workflow used to do — would not be accepted.
+  #
+  # draft: true is required for attestations to coexist with immutable releases:
+  # assets must be attached while the release is still mutable. The finalize job in
+  # publish-to-bcr.yml flips it to published.
+  release:
     needs: [check, native, distribution]
-    if: ${{ github.event_name == 'push' || !inputs.dry_run }}
-    runs-on: ubuntu-latest
     permissions:
-      contents: write   # create the release
-      id-token: write   # provenance attestation
+      contents: write
+      id-token: write
       attestations: write
-    steps:
-      - uses: actions/checkout@v7
+    uses: bazel-contrib/.github/.github/workflows/release_ruleset.yaml@v7.7.0
+    with:
+      bazel_test_command: "bazel test //..."
+      draft: true
+      prerelease: false
+      release_files: |
+        protoc-gen-clojure-module.tar.gz
+        protoc-gen-clojure_*
+      tag_name: ${{ inputs.tag_name || github.ref_name }}
 
-      - uses: actions/download-artifact@v6
-        with:
-          pattern: binary-*
-          merge-multiple: true
-          path: dist
-
-      - uses: bazel-contrib/setup-bazel@0.19.0
-        with:
-          bazelisk-cache: true
-          repository-cache: true
-          # Same rule as ci.yml: only main writes caches. Two reasons here —
-          # workflow_dispatch can target any branch (a branch dry run already left
-          # 1.7GB of orphaned caches behind), and a real release runs on a TAG ref,
-          # whose caches no future run can ever read. Saving on a tag is pure quota
-          # burn. Tag runs still RESTORE main's caches, since the default branch is
-          # readable from any ref.
-          cache-save: ${{ github.ref == 'refs/heads/main' }}
-
-      # No setup-java: .bazelrc pins --java_runtime_version=remotejdk_21, so Bazel
-      # brings its own JDK and an action-installed one would only shadow it.
-      - name: build the uberjar
-        run: |
-          bazel build //src/clj_grpc:protoc_gen_clojure_jvm_deploy.jar
-          cp "$(bazel cquery --output=files //src/clj_grpc:protoc_gen_clojure_jvm_deploy.jar | tail -1)" \
-             "dist/protoc-gen-clojure_${{ needs.check.outputs.version }}.jar"
-
-      - name: checksums
-        run: |
-          cd dist
-          chmod +x protoc-gen-clojure_*_* 2>/dev/null || true
-          sha256sum * > SHA256SUMS
-          cat SHA256SUMS
-
-      # The BCR source archive. Not GitHub's generated tarball: bazel/versions.bzl
-      # must carry the checksums of the binaries released alongside it, and those
-      # cannot be known when the tag is cut. So pin them first, then let Bazel
-      # build the tar — pkg_tar gives deterministic bytes, where `tar -czf` would
-      # differ between BSD and GNU.
-      - name: pin the binary checksums
-        run: bazel run //bazel/tools:pin_versions -- "${{ needs.check.outputs.version }}" dist
-
-      - name: build the module source archive
-        run: |
-          bazel build //bazel/dev:module_archive
-          cp bazel-bin/bazel/dev/module_archive.tar.gz dist/protoc-gen-clojure-module.tar.gz
-
-      - uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: "dist/protoc-gen-clojure_*"
-
-      - name: create the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "v${{ needs.check.outputs.version }}" \
-            --title "v${{ needs.check.outputs.version }}" \
-            --generate-notes \
-            dist/*
+  publish-to-bcr:
+    needs: release
+    uses: ./.github/workflows/publish-to-bcr.yml
+    with:
+      tag_name: ${{ inputs.tag_name || github.ref_name }}
+    secrets:
+      bcr_publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}

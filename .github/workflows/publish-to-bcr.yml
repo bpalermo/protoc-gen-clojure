@@ -1,0 +1,59 @@
+name: publish to the Bazel Central Registry
+
+# The GitHub App is gone: it was discontinued after 30 June 2026, and it could
+# never have produced attestations anyway — an App has no access to workflow OIDC
+# tokens, which is what BCR verifies the archive against. Hence the reusable
+# workflow.
+
+on:
+  # Called from release.yml.
+  workflow_call:
+    inputs:
+      tag_name:
+        required: true
+        type: string
+    secrets:
+      bcr_publish_token:
+        required: true
+
+  # Retry by hand if the release succeeded but publishing did not.
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag to publish, e.g. v0.1.0"
+        required: true
+        type: string
+
+jobs:
+  publish-to-bcr:
+    uses: bazel-contrib/publish-to-bcr/.github/workflows/publish.yaml@v1.4.2
+    with:
+      tag_name: ${{ inputs.tag_name }}
+      # A fork of bazelbuild/bazel-central-registry that the token can push a
+      # branch to; the PR is opened from there against upstream.
+      registry_fork: bpalermo/bazel-central-registry
+      # attest defaults to true and stays that way. It is only accepted because
+      # the archive comes from release_ruleset — see the comment in release.yml.
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    secrets:
+      # Classic PAT with `repo` and `workflow` scope. A fine-grained token cannot
+      # open a pull request against a public repository.
+      publish_token: ${{ secrets.bcr_publish_token }}
+
+  # release_ruleset leaves the release as a draft so attestations can be attached
+  # while it is still mutable. Nothing else finalises it, so do it here — after
+  # publishing, so a failed BCR push leaves the release unpublished rather than
+  # half-announced.
+  finalize:
+    needs: publish-to-bcr
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          TAG: ${{ inputs.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
