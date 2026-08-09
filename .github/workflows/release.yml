@@ -278,16 +278,36 @@ jobs:
   #   - wrapper DECLARING `publish_token` and mapping it onward    -> valid
   #   - wrapper relying on `secrets: inherit` for it               -> STARTUP FAILURE
   #
-  # The one shape that validated and would have kept a wrapper — declaring
-  # `publish_token` in the wrapper's own `workflow_call.secrets` — cannot work
-  # here, because the token is an ENVIRONMENT secret: nothing at this level can
-  # read it, so the wrapper would forward an empty string and fail at git push
-  # time with an opaque auth error. Only the job that declares the environment can
-  # resolve it, and that job is inside the workflow below.
+  # "valid" above means only that the workflow could START. GitHub checks required
+  # secrets in TWO places, and `if: false` skips the second: the direct call with
+  # `secrets: inherit` passed startup and then still failed at job evaluation. So a
+  # green probe here proves the graph loads, not that the job can run.
   #
   # There is deliberately no manual-retry workflow any more. GitHub's "Re-run
   # failed jobs" on this run is the retry, and it does not need a second copy of
   # the configuration below to drift out of step.
+  #
+  # On the secret, which is subtler than it looks and cost the v0.1.0-rc1 run:
+  # `secrets: inherit` does NOT work here, even for this direct call. It fails
+  # before any step runs, with
+  #
+  #   Error when evaluating 'secrets'. Secret publish_token is required, but not
+  #   provided while calling.
+  #
+  # because PUBLISH_TOKEN is an ENVIRONMENT secret and `inherit` passes only the
+  # caller's repository and organization secrets. Mapping it explicitly is what
+  # works, and it is not the no-op it appears to be. Measured with a probe that
+  # printed secret LENGTHS from inside a called workflow whose job declares the
+  # environment:
+  #
+  #   caller maps `${{ secrets.PUBLISH_TOKEN }}` explicitly  -> length 40
+  #   caller uses `secrets: inherit`, secret optional        -> length 0
+  #   same job reading `secrets.PUBLISH_TOKEN` directly      -> length 40
+  #
+  # So two separate things happen: the mapping below is empty at THIS level, which
+  # is all the static required-secret check needs, and the environment secret then
+  # shadows it inside the job that declares `environment:`. Reverting this to
+  # `inherit` breaks the release again, at job evaluation rather than at push time.
   publish-to-bcr:
     needs: release
     permissions:
@@ -319,9 +339,10 @@ jobs:
       # `environment:` itself (actions/runner#1490); the callee's job declares it,
       # which is also the only place the environment secret can be resolved.
       #
-      # The secret must be named PUBLISH_TOKEN. With `secrets: inherit` GitHub
-      # matches by name and the callee reads `secrets.publish_token` (names are
-      # case-insensitive). BCR_PUBLISH_TOKEN would not satisfy it.
+      # The environment secret must be named PUBLISH_TOKEN, matching the callee's
+      # `secrets.publish_token` (names are case-insensitive) so that it shadows the
+      # value mapped below. A differently-named secret would leave the mapping empty
+      # and fail at git push time with an opaque auth error instead.
       environment: bcr-publish
       # Required with immutable releases: the release is still a draft while this
       # runs, so downloading assets by release URL would 404. Upstream defaults it
@@ -329,4 +350,8 @@ jobs:
       download_default_release_artifacts: true
       # attest defaults to true and stays that way. It is only accepted because
       # the archive comes from release_ruleset — see the comment above.
-    secrets: inherit
+    # Explicitly mapped, NOT `inherit`. See the comment above this job: this
+    # expression is empty here, and the bcr-publish environment secret shadows it
+    # inside the callee's job. Do not "simplify" it to inherit.
+    secrets:
+      publish_token: ${{ secrets.PUBLISH_TOKEN }}
