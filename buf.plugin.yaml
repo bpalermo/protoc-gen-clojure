@@ -6,9 +6,11 @@
 # adoption and maturity. This file exists so that request is a formality rather
 # than a project.
 #
-# A remote plugin also needs a container image, which is NOT built here. See
-# issue: image packaging will use rules_img (hermetic, no Docker daemon, and
-# multi-platform via image_index) once there is somewhere to push it.
+# A remote plugin also needs a container image. It IS built now, by
+# //bazel/dev:image with rules_img — no Docker daemon, and the native binary comes
+# straight from the build graph. It is deliberately not pushed: there is nowhere to
+# push it until public plugin publishing is possible. //bazel/dev:push carries the
+# destination and is tagged manual.
 #
 # The plugin does qualify technically: the BSR sandbox requires a remote plugin
 # to be a pure function of the CodeGeneratorRequest — no filesystem, no network,

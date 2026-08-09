@@ -62,6 +62,13 @@ jobs:
       - name: lint (buf, shellcheck, formatting)
         run: bazel test //... --test_tag_filters=lint --test_output=errors
 
+      # `bazel test //...` does not build non-test targets, and the image is
+      # linux-only (it must contain a Linux binary, and GraalVM cannot
+      # cross-compile), so it is skipped as incompatible on a developer's Mac.
+      # This is where it actually gets built.
+      - name: build the plugin container image
+        run: bazel build //bazel/dev:image
+
       - name: bazel test //...
         run: |
           bazel test //... --test_output=errors \
