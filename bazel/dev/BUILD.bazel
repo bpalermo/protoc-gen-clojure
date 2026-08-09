@@ -120,13 +120,35 @@ image_manifest(
     target_compatible_with = ["@platforms//os:linux"],
 )
 
-# Not wired into any workflow: there is no destination yet. Kept so the push path
-# is reviewed alongside the image rather than invented under time pressure later.
+# ghcr.io, because it is a destination that exists. buf.build was aspirational:
+# public plugin publishing there is not self-serve, so pushing was impossible.
+# GitHub's registry needs only a token the release workflow already has.
+#
+# Tags are stamped from workspace status (see bazel/tools/workspace_status.sh):
+# the version and the commit identify the artifact, and `latest` is the moving
+# pointer. STABLE_ keys are part of the action cache key, so a new commit
+# re-stamps rather than silently reusing a previous tag.
+#
+# stamp = "force" because the default defers to Bazel's --stamp, and a release
+# that forgot the flag would push tags containing empty strings.
+#
+# manual keeps it out of wildcard builds — nothing should push by accident;
+# `bazel run` still works, which is how the release invokes it.
 image_push(
     name = "push",
     image = ":image",
-    registry = "buf.build",
-    repository = "bpalermo/clojure",
-    tag = "latest",
+    registry = "ghcr.io",
+    repository = "bpalermo/protoc-gen-clojure",
+    stamp = "force",
+    tag_list = [
+        "{{.STABLE_VERSION}}",
+        "{{.STABLE_GIT_COMMIT}}",
+        # `latest` moves only for a stable version. A prerelease must not claim it,
+        # or `docker pull …:latest` hands someone a release candidate. The version
+        # and commit tags are immutable and identify the artifact on their own, so
+        # this only governs the convenience pointer.
+        "{{if eq .STABLE_MOVING_TAG \"latest\"}}latest{{end}}",
+    ],
     tags = ["manual"],
+    target_compatible_with = ["@platforms//os:linux"],
 )

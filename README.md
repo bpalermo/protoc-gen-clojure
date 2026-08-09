@@ -86,9 +86,16 @@ plugins:
     out: src/gen
 ```
 
-Remote execution on the BSR (`buf.build/bpalermo/clojure`) is prepared but not
-published — public plugin publishing there is not self-serve. See
-`buf.plugin.yaml`.
+A container image is published to
+`ghcr.io/bpalermo/protoc-gen-clojure`, tagged with the version, the commit, and
+`latest`:
+
+```sh
+docker run --rm -i ghcr.io/bpalermo/protoc-gen-clojure < request.bin > response.bin
+```
+
+Remote execution on the BSR is prepared but not published — public plugin
+publishing there is not self-serve. See `buf.plugin.yaml`.
 
 ### Bazel
 
