@@ -2,6 +2,9 @@ name: release
 
 on:
   push:
+    # Matches prerelease tags too: `*` matches any character except `/`, so the
+    # final one absorbs the suffix in v0.1.0-rc1. Rehearsal tags therefore trigger
+    # this workflow, and the `prerelease` input below marks them accordingly.
     tags: ["v*.*.*"]
   # Manual dispatch for retries. There is deliberately no dry_run any more: the
   # source archive must be produced by bazel-contrib/.github's release_ruleset
@@ -32,7 +35,10 @@ jobs:
           echo "releasing $version"
 
           # plugin.clj is what the binary reports as --version.
-          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+"' src/clj_grpc/plugin.clj \
+          # The optional -suffix is what makes a rehearsal tag possible: without
+          # it this regex yields nothing for "0.1.0-rc1", the comparison fails, and
+          # a prerelease can never be cut.
+          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' src/clj_grpc/plugin.clj \
                      | tr -d ' "' | head -1)
           if [ "$declared" != "$version" ]; then
             echo "::error::plugin.clj declares '$declared' but the tag is '$version'" >&2
@@ -167,7 +173,10 @@ jobs:
     with:
       bazel_test_command: "bazel test //..."
       draft: true
-      prerelease: false
+      # Derived from the tag: anything with a -suffix (v0.1.0-rc1) is a
+      # prerelease. Hardcoding false would publish a rehearsal tag as a full
+      # release, which is the opposite of rehearsing.
+      prerelease: ${{ contains(inputs.tag_name || github.ref_name, '-') }}
       release_files: |
         protoc-gen-clojure-module.tar.gz
         protoc-gen-clojure_*
