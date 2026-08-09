@@ -107,19 +107,26 @@ jobs:
           #
           # They are dynamically linked: GraalVM's --static needs a musl-built
           # libz.a, which neither zlib1g-dev nor a zig toolchain provides (see the
-          # tracking issue). So the floor is whatever the build runner's glibc is,
-          # and a user on an older distribution gets "GLIBC_2.xx not found" from a
-          # binary that ran fine in CI.
+          # tracking issue). A user on an older distribution gets
+          # "GLIBC_2.xx not found" from a binary that ran fine in CI.
           #
           # Asserting it makes the floor a deliberate, visible property rather than
           # an accident of the runner image: bumping the runner will fail here
           # instead of silently narrowing who can run the release.
+          #
+          # The ceiling is 2.34, which is what v0.1.0-rc1 actually produced on both
+          # architectures — NOT the runner's own 2.39, because GraalVM links against
+          # older symbol versions than the build host provides. It was set to 2.39
+          # before anything had been released, which left five versions of slack: the
+          # floor could have crept up to 2.39 and silently dropped every distribution
+          # between, including the ubuntu2204 image that .bcr/presubmit.yml now
+          # relies on. Raising this line is a deliberate act of narrowing support.
           case "${{ matrix.os_arch }}" in
             linux_*)
               floor=$(objdump -T "$out" 2>/dev/null \
                 | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
               echo "glibc floor: ${floor:-none}"
-              max="GLIBC_2.39"
+              max="GLIBC_2.34"
               if [ -n "$floor" ] && [ "$(printf '%s\n%s\n' "$floor" "$max" | sort -V | tail -1)" != "$max" ]; then
                 echo "::error::glibc floor $floor exceeds $max; the runner image moved" >&2
                 exit 1

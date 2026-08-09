@@ -11,7 +11,16 @@ bazel_dep(name = "protoc_gen_clojure", version = "0.1.0")
 bazel_dep(name = "protobuf", version = "35.1")
 bazel_dep(name = "rules_shell", version = "0.8.0")
 
-# Overridden by BCR's presubmit to point at the module under test.
+# Resolves to the module under test — but NOT because BCR's presubmit rewrites it,
+# which it does not. bcr_presubmit.py vendors this module through the registry
+# (which is what exercises source.json's URL and integrity), moves the extracted
+# source to `module_src/`, and then runs this directory as
+# `module_src/examples/bzlmod`, appending --registry to a .bazelrc. MODULE.bazel is
+# left alone.
+#
+# So `../..` lands on `module_src` — the extracted release archive — which is
+# exactly the module under test. The same line is what makes this directory
+# buildable in-repo against a checkout.
 local_path_override(
     module_name = "protoc_gen_clojure",
     path = "../..",
