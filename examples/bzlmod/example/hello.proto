@@ -1,0 +1,11 @@
+edition = "2024";
+
+package example;
+
+message Hello {
+  string name = 1;
+}
+
+service Greeter {
+  rpc Greet(Hello) returns (Hello);
+}

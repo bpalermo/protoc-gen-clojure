@@ -1,0 +1,110 @@
+load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@rules_clojure//:rules.bzl", "clojure_test")
+load("@rules_java//java:defs.bzl", "java_library")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_library.bzl", "sh_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel/lint:linters.bzl", "shellcheck_test")
+
+package(default_visibility = ["//visibility:public"])
+
+java_library(
+    name = "libplugin_test",
+    resource_strip_prefix = "test",
+    resources = ["plugin_test.clj"],
+    runtime_deps = ["//src/clj_grpc:plugin"],
+)
+
+clojure_test(
+    name = "plugin_test",
+    resource_strip_prefix = "test",
+    test_ns = "plugin-test",
+    runtime_deps = [":libplugin_test"],
+)
+
+sh_test(
+    name = "sandbox_conformance_test",
+    srcs = ["sandbox_conformance_test.sh"],
+    args = ["$(rootpath //src/clj_grpc:plugin.clj)"],
+    data = ["//src/clj_grpc:plugin.clj"],
+)
+
+# The distribution test, now a real Bazel test: the native binary is a graph
+# artifact (//bazel:native_image.bzl), and protoc and buf come from the graph too,
+# so nothing depends on what happens to be installed.
+#
+# It still runs the binary in a scratch directory with only itself on PATH, which
+# is the point — everything else in this suite exercises the JVM plugin inside
+# Bazel and proves nothing about the shipped artifact.
+sh_test(
+    name = "distribution_test",
+    srcs = ["distribution_test.sh"],
+    args = [
+        "$(rootpath @protobuf//:protoc)",
+        "$(rootpath @rules_buf_toolchains//:buf)",
+        "$(rootpath //src/clj_grpc:protoc_gen_clojure)",
+    ],
+    data = [
+        "//src/clj_grpc:protoc_gen_clojure",
+        "@protobuf//:protoc",
+        "@rules_buf_toolchains//:buf",
+    ],
+)
+
+# distribution_test.sh is invoked from CI rather than by Bazel — it must run
+# outside the sandbox to prove the artifact needs nothing from it. Declaring it
+# here is what gets it shellchecked.
+sh_library(
+    name = "distribution_test_src",
+    srcs = ["distribution_test.sh"],
+)
+
+shellcheck_test(
+    name = "scripts_lint",
+    srcs = [
+        ":distribution_test_src",
+        ":sandbox_conformance_test",
+    ],
+    tags = ["lint"],
+)
+
+# The same check against an arbitrary binary — used by the release workflow to
+# verify a DOWNLOADED asset, which is not a graph artifact:
+#
+#   PLUGIN=dist/protoc-gen-clojure_0.1.0_linux_x86_64 bazel run //test:distribution_check
+#
+# protoc and buf arrive as runfiles here, rather than being symlinked onto PATH
+# instead of being symlinked onto PATH by a shell script.
+sh_binary(
+    name = "distribution_check",
+    srcs = ["distribution_test.sh"],
+    args = [
+        "$(rootpath @protobuf//:protoc)",
+        "$(rootpath @rules_buf_toolchains//:buf)",
+    ],
+    data = [
+        "@protobuf//:protoc",
+        "@rules_buf_toolchains//:buf",
+    ],
+)
+
+# Golden files, as a rule rather than a pair of scripts:
+#
+#   bazel test //test:update_golden_test   fail if generated output drifted
+#   bazel run  //test:update_golden        accept the drift, then review the diff
+#
+# The mapping is keyed on the same paths //test/proto:generated declares, so a
+# proto added there without a golden fails at analysis instead of being skipped —
+# which is what the hand-rolled version needed an explicit count check to catch.
+write_source_files(
+    name = "update_golden",
+    files = {
+        "golden/acme/greeter/greeter.clj": "//test/proto:acme/greeter/greeter.clj",
+        "golden/fixtures/bench/shapes.clj": "//test/proto:fixtures/bench/shapes.clj",
+        "golden/fixtures/e2023/kitchen.clj": "//test/proto:fixtures/e2023/kitchen.clj",
+        "golden/fixtures/e2024/kitchen.clj": "//test/proto:fixtures/e2024/kitchen.clj",
+        "golden/fixtures/e2024legacy/legacy_style.clj": "//test/proto:fixtures/e2024legacy/legacy_style.clj",
+        "golden/fixtures/p2/kitchen.clj": "//test/proto:fixtures/p2/kitchen.clj",
+        "golden/fixtures/p3/kitchen.clj": "//test/proto:fixtures/p3/kitchen.clj",
+    },
+)

@@ -1,0 +1,24 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "defs.bzl",
+    "extensions.bzl",
+    "toolchain.bzl",
+    "versions.bzl",
+])
+
+# Resolved by clojure_proto_library. Declared mandatory = False there, so a
+# target passing an explicit `plugin` works with no toolchain registered — which
+# is how this repo tests the binary it just built.
+toolchain_type(name = "toolchain_type")
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "BUILD.bazel",
+        "defs.bzl",
+        "extensions.bzl",
+        "toolchain.bzl",
+        "versions.bzl",
+    ],
+)

@@ -1,0 +1,21 @@
+# For editors. No formatter in this repo reads it: shell is linted but not
+# formatted (see README), and buildifier has its own fixed style.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.sh]
+indent_style = space
+indent_size = 2
+
+[*.{bzl,bazel}]
+indent_style = space
+indent_size = 4
+
+[*.clj]
+indent_style = space
+indent_size = 2

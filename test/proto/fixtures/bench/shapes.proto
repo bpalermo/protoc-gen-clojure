@@ -1,0 +1,69 @@
+edition = "2024";
+
+package fixtures.bench;
+
+option java_package = "com.acme.fixtures.bench";
+
+// Message archetypes for the representation benchmark. Real payloads differ
+// enormously in shape, and the map-vs-record trade-off does not behave the same
+// across them — a flat scalar message is dominated by per-field overhead, while
+// a deeply nested one is dominated by allocation.
+
+// 12 scalars, no nesting. Worst case for per-field overhead.
+message Flat {
+  string f1 = 1;
+  string f2 = 2;
+  string f3 = 3;
+  int32 f4 = 4;
+  int32 f5 = 5;
+  int64 f6 = 6;
+  int64 f7 = 7;
+  bool f8 = 8;
+  bool f9 = 9;
+  double f10 = 10;
+  double f11 = 11;
+  string f12 = 12;
+}
+
+// Three fields. Best case for per-message overhead to show up.
+message Tiny {
+  string id = 1;
+  int32 n = 2;
+  bool ok = 3;
+}
+
+// Four levels of nesting. Stresses recursive construction and allocation.
+message Deep {
+  string id = 1;
+  Level2 child = 2;
+}
+message Level2 {
+  string id = 1;
+  Level3 child = 2;
+}
+message Level3 {
+  string id = 1;
+  Level4 child = 2;
+}
+message Level4 {
+  string id = 1;
+  string leaf = 2;
+}
+
+// One wide repeated field. Stresses the repeated path, not the field loop.
+message WideRepeated {
+  string id = 1;
+  repeated string items = 2;
+}
+
+// Repeated submessages — the common "list of rows" shape.
+message RepeatedMessages {
+  string id = 1;
+  repeated Tiny rows = 2;
+}
+
+// A map field. Stresses entry-builder construction.
+message MapHeavy {
+  string id = 1;
+  map<string, int32> counts = 2;
+}

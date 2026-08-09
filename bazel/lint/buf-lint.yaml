@@ -1,0 +1,13 @@
+version: v2
+lint:
+  # BASIC, not STANDARD. STANDARD requires version-suffixed packages
+  # ("acme.greeter.v1") and a distinct request/response type per RPC — sound advice
+  # for a real API, but these are fixtures whose job is to exercise the codec, and
+  # rewriting them to satisfy an API style guide would weaken what they test.
+  use:
+    - BASIC
+  except:
+    # legacy_style.proto violates naming rules on purpose: it exists to prove the
+    # codec does not depend on a case convention.
+    - FIELD_LOWER_SNAKE_CASE
+    - MESSAGE_PASCAL_CASE

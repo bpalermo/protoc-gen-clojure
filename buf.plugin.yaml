@@ -1,0 +1,26 @@
+# Metadata for a BSR remote plugin.
+#
+# NOT yet published, and not publishable unilaterally: public plugin publishing
+# on buf.build is not self-serve — it needs a Pro/Enterprise private instance, or
+# Buf's acceptance of a request against bufbuild/plugins, which they gate on
+# adoption and maturity. This file exists so that request is a formality rather
+# than a project.
+#
+# A remote plugin also needs a container image, which is NOT built here. See
+# issue: image packaging will use rules_img (hermetic, no Docker daemon, and
+# multi-platform via image_index) once there is somewhere to push it.
+#
+# The plugin does qualify technically: the BSR sandbox requires a remote plugin
+# to be a pure function of the CodeGeneratorRequest — no filesystem, no network,
+# no environment — which //test:sandbox_conformance_test enforces.
+version: v1
+name: buf.build/bpalermo/clojure
+plugin_version: v0.1.0
+source_url: https://github.com/bpalermo/protoc-gen-clojure
+description: Generates Clojure records, codecs and gRPC service descriptors.
+output_languages:
+  - clojure
+spdx_license_id: Apache-2.0
+license_url: https://github.com/bpalermo/protoc-gen-clojure/blob/main/LICENSE
+registry:
+  opts: []

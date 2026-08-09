@@ -1,0 +1,76 @@
+"""Development-only targets: formatting and the release archive.
+
+Kept out of the root package on purpose. The root BUILD file ships in the module
+archive, so a `load` of any dev_dependency there would break every consumer at
+BUILD-loading time. Nothing in this package is published.
+"""
+
+load("@aspect_rules_lint//format:defs.bzl", "format_multirun", "format_test")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+
+# Formatters, which are the "fix it for me" half of lint:
+#
+#   bazel run  //bazel/dev:format        rewrite files in place
+#   bazel test //bazel/dev:format_test   fail if anything is unformatted
+#
+# proto formatting deliberately uses OUR pinned buf rather than a bundled one, so
+# the tool that formats is the same one that lints and the same one the
+# distribution test verifies with.
+# No shell formatter, deliberately. shfmt is only reachable via @multitool, and
+# registering that hub requires a non-dev use_extension on a dev-only module —
+# which makes @rules_multitool invisible to consumers and breaks every one of
+# them at module-resolution time. shellcheck LINT is unaffected: rules_lint
+# aliases it inside its own repo, where @multitool is visible.
+format_multirun(
+    name = "format",
+    protocol_buffer = "@rules_buf_toolchains//:buf",
+    starlark = "@buildifier_prebuilt//:buildifier",
+)
+
+format_test(
+    name = "format_test",
+    no_sandbox = True,
+    protocol_buffer = "@rules_buf_toolchains//:buf",
+    starlark = "@buildifier_prebuilt//:buildifier",
+    tags = ["lint"],
+    workspace = "//:MODULE.bazel",
+)
+
+# ---------------------------------------------------------------------------
+# The module source archive BCR serves.
+#
+# Not GitHub's auto-generated tarball, because bazel/versions.bzl has to carry the
+# sha256 of the native binaries released alongside it, and those cannot exist when
+# the tag is cut. The release workflow pins them with //bazel/tools:pin_versions, then
+# builds this.
+#
+# Deliberately curated rather than "everything git tracks":
+#
+#   - src/ and test/ are omitted. Their BUILD files load @rules_clojure, which is
+#     a dev_dependency and therefore absent for a consumer — a package that cannot
+#     load is worse than a package that is missing.
+#   - examples/bzlmod IS included: BCR's presubmit uses it as the test module.
+#
+# The prefix is version-independent on purpose, so .bcr/source.template.json needs
+# no {VERSION} substitution in strip_prefix.
+filegroup(
+    name = "module_srcs",
+    srcs = [
+        "//:BUILD.bazel",
+        "//:LICENSE",
+        "//:MODULE.bazel",
+        "//:README.md",
+        "//bazel:srcs",
+        "//examples/bzlmod:srcs",
+    ],
+)
+
+pkg_tar(
+    name = "module_archive",
+    srcs = [":module_srcs"],
+    extension = "tar.gz",
+    package_dir = "protoc-gen-clojure",
+    # Workspace-relative paths inside the archive. "/" means the workspace root
+    # rather than this package, which matters now that this lives in //bazel/dev.
+    strip_prefix = "/",
+)

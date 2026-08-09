@@ -1,0 +1,17 @@
+edition = "2024";
+
+package fixtures.e2024legacy;
+
+// STYLE_LEGACY opt-out: field names are NOT guaranteed lower_snake_case here.
+// This is the arm that proves the codec must derive keys from the descriptor's
+// field name rather than assuming a case convention it can round-trip.
+option features.enforce_naming_style = STYLE_LEGACY;
+option java_package = "com.acme.fixtures.e2024legacy";
+
+message legacyStyleMessage {
+  string camelCaseField = 1;
+  string UPPER_SNAKE_FIELD = 2;
+  string already_snake = 3;
+  string x = 4;
+  string http2Server = 5;
+}

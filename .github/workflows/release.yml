@@ -1,0 +1,212 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manually runnable so the pipeline can be exercised without cutting a real
+  # tag. dry_run stops short of creating the release.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, without the leading v (e.g. 0.1.0)"
+        required: true
+      dry_run:
+        description: "Build and check everything, but publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fail before spending four native builds on a version that misreports itself.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: v
+        name: resolve the version and assert the source agrees
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF#refs/tags/v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "releasing $version"
+
+          # plugin.clj holds the version; a mismatch means the binary would
+          # report something other than its tag.
+          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+"' src/clj_grpc/plugin.clj \
+                     | tr -d ' "' | head -1)
+          if [ "$declared" != "$version" ]; then
+            echo "::error::plugin.clj declares version '$declared' but the release is '$version'" >&2
+            exit 1
+          fi
+
+          # MODULE.bazel's version is what BCR publishes.
+          modver=$(grep -oE 'version = "[^"]+"' MODULE.bazel | head -1 | cut -d'"' -f2)
+          if [ "$modver" != "$version" ]; then
+            echo "::error::MODULE.bazel declares version '$modver' but the release is '$version'" >&2
+            exit 1
+          fi
+
+  # GraalVM cannot cross-compile, so there is one runner per target platform.
+  # https://github.com/oracle/graal/issues/407
+  native:
+    needs: check
+    name: ${{ matrix.os_arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            os_arch: linux_x86_64
+          - runner: ubuntu-24.04-arm
+            os_arch: linux_aarch64
+          - runner: macos-13
+            os_arch: darwin_x86_64
+          - runner: macos-latest
+            os_arch: darwin_arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: release-${{ matrix.os_arch }}
+          repository-cache: true
+
+      # The same target CI builds and //test:distribution_test exercises, so the
+      # released binary is produced exactly as the tested one is. GraalVM comes
+      # from the Bazel graph, so there is no SDK to install here.
+      - name: build the native binary
+        run: |
+          bazel build //src/clj_grpc:protoc_gen_clojure
+          mkdir -p dist
+          cp bazel-bin/src/clj_grpc/protoc-gen-clojure dist/protoc-gen-clojure
+          chmod +x dist/protoc-gen-clojure
+
+      # A matrix misconfiguration would otherwise ship four copies of one host
+      # build under four different names, and nothing downstream would notice.
+      - name: assert the binary is actually for this platform
+        run: |
+          file dist/protoc-gen-clojure
+          case "${{ matrix.os_arch }}" in
+            linux_x86_64)  file dist/protoc-gen-clojure | grep -q "ELF 64-bit.*x86-64" ;;
+            linux_aarch64) file dist/protoc-gen-clojure | grep -q "ELF 64-bit.*aarch64" ;;
+            darwin_x86_64) file dist/protoc-gen-clojure | grep -q "Mach-O 64-bit.*x86_64" ;;
+            darwin_arm64)  file dist/protoc-gen-clojure | grep -q "Mach-O 64-bit.*arm64" ;;
+          esac
+          echo "OK: ${{ matrix.os_arch }}"
+
+      - name: the binary runs and reports the release version
+        run: |
+          got="$(dist/protoc-gen-clojure --version)"
+          echo "$got"
+          echo "$got" | grep -q "${{ needs.check.outputs.version }}"
+
+      - name: rename for release
+        run: |
+          mkdir -p out
+          cp dist/protoc-gen-clojure \
+            "out/protoc-gen-clojure_${{ needs.check.outputs.version }}_${{ matrix.os_arch }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.os_arch }}
+          path: out/*
+          if-no-files-found: error
+
+  # End-to-end on the real artifact, under real protoc and real buf, before it is
+  # published rather than after.
+  distribution:
+    needs: [check, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: binary-linux_x86_64
+          path: dl
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      # The same check //test:distribution_test runs, pointed at the DOWNLOADED
+      # asset rather than a graph artifact. protoc and buf arrive as hermetic
+      # runfiles, so nothing here depends on what the runner has installed.
+      - run: |
+          chmod +x dl/*
+          PLUGIN="$PWD/dl/protoc-gen-clojure_${{ needs.check.outputs.version }}_linux_x86_64" \
+            bazel run //test:distribution_check
+
+  publish:
+    needs: [check, native, distribution]
+    if: ${{ github.event_name == 'push' || !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release
+      id-token: write   # provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: dist
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      # No setup-java: .bazelrc pins --java_runtime_version=remotejdk_21, so Bazel
+      # brings its own JDK and an action-installed one would only shadow it.
+      - name: build the uberjar
+        run: |
+          bazel build //src/clj_grpc:protoc_gen_clojure_jvm_deploy.jar
+          cp "$(bazel cquery --output=files //src/clj_grpc:protoc_gen_clojure_jvm_deploy.jar | tail -1)" \
+             "dist/protoc-gen-clojure_${{ needs.check.outputs.version }}.jar"
+
+      - name: checksums
+        run: |
+          cd dist
+          chmod +x protoc-gen-clojure_*_* 2>/dev/null || true
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      # The BCR source archive. Not GitHub's generated tarball: bazel/versions.bzl
+      # must carry the checksums of the binaries released alongside it, and those
+      # cannot be known when the tag is cut. So pin them first, then let Bazel
+      # build the tar — pkg_tar gives deterministic bytes, where `tar -czf` would
+      # differ between BSD and GNU.
+      - name: pin the binary checksums
+        run: bazel run //bazel/tools:pin_versions -- "${{ needs.check.outputs.version }}" dist
+
+      - name: build the module source archive
+        run: |
+          bazel build //bazel/dev:module_archive
+          cp bazel-bin/bazel/dev/module_archive.tar.gz dist/protoc-gen-clojure-module.tar.gz
+
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: "dist/protoc-gen-clojure_*"
+
+      - name: create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ needs.check.outputs.version }}" \
+            --title "v${{ needs.check.outputs.version }}" \
+            --generate-notes \
+            dist/*

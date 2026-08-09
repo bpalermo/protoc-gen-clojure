@@ -1,0 +1,53 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("//bazel:defs.bzl", "clojure_proto_library")
+load("//bazel/lint:linters.bzl", "buf_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Fixtures covering every syntax the plugin has to handle: proto2, proto3, and
+# editions 2023 and 2024, including edition 2024's `import option`.
+#
+# strip_import_prefix makes this directory the proto root, so imports resolve as
+# "fixtures/e2024/kitchen.proto" — matching the paths written in the .proto files.
+proto_library(
+    name = "fixtures_proto",
+    srcs = glob(["**/*.proto"]),
+    # Edition 2024's `import option` is a distinct edge from a normal import and
+    # Bazel models it separately: e2024/kitchen.proto option-imports
+    # java_features.proto to set (pb.java).nest_in_file_class. Listing it under
+    # deps instead fails with "is option imported, but ... doesn't have direct
+    # `option_deps`".
+    option_deps = ["@protobuf//:java_features_proto"],
+    strip_import_prefix = "/test/proto",
+    deps = [
+        "@protobuf//:duration_proto",
+        "@protobuf//:timestamp_proto",
+        "@protobuf//:wrappers_proto",
+    ],
+)
+
+# Generated with the binary built in this repo, via the `plugin` override. The
+# toolchain path needs a published release, so it is covered separately by the
+# BCR test module under //examples.
+clojure_proto_library(
+    name = "generated",
+    outs = [
+        "acme/greeter/greeter.clj",
+        "fixtures/bench/shapes.clj",
+        "fixtures/e2023/kitchen.clj",
+        "fixtures/e2024/kitchen.clj",
+        "fixtures/e2024legacy/legacy_style.clj",
+        "fixtures/p2/kitchen.clj",
+        "fixtures/p3/kitchen.clj",
+    ],
+    plugin = "//src/clj_grpc:protoc_gen_clojure_jvm",
+    proto = ":fixtures_proto",
+)
+
+# The fixtures are the plugin's input contract, so they are worth linting even
+# though they exist only for tests.
+buf_test(
+    name = "fixtures_proto_lint",
+    srcs = [":fixtures_proto"],
+    tags = ["lint"],
+)

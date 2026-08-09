@@ -1,0 +1,74 @@
+edition = "2024";
+
+package fixtures.e2024;
+
+// NB: java_multiple_files no longer exists in 2024. Its replacement is the
+// per-message feature (pb.java).nest_in_file_class, which defaults to NO —
+// i.e. the old java_multiple_files = true behaviour is now the default.
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+// `import option` (new in 2024, replaces the removed `import weak`) pulls in
+// only the custom options, not the file's other symbols.
+import option "google/protobuf/java_features.proto";
+
+option java_package = "com.acme.fixtures.e2024";
+
+// edition 2024 arm — the target of the rewrite.
+//   field_presence            = EXPLICIT
+//   enum_type                 = OPEN
+//   enforce_naming_style      = STYLE2024
+//   default_symbol_visibility = EXPORT_TOP_LEVEL
+//   (pb.java).nest_in_file_class = NO
+// Outer class defaults to KitchenProto (camel-cased filename + "Proto").
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+  COLOR_BLUE = 2;
+}
+
+message Nested {
+  string id = 1;
+}
+
+message Delimited {
+  string note = 1;
+}
+
+message Kitchen {
+  string str_field = 1;
+  int32 int_field = 2;
+  bool bool_field = 3;
+  bytes bytes_field = 4;
+  double dbl_field = 5;
+  int64 long_field = 6;
+  Color enum_field = 7;
+  Nested msg_field = 8;
+  repeated string tags = 9;
+  repeated Nested children = 10;
+  map<string, int32> counts = 11;
+
+  oneof choice {
+    string choice_str = 12;
+    int32 choice_int = 13;
+    Nested choice_msg = 14;
+  }
+
+  google.protobuf.Timestamp ts = 15;
+  google.protobuf.Duration dur = 16;
+  google.protobuf.StringValue wrapped = 17;
+
+  string implicit_field = 18 [features.field_presence = IMPLICIT];
+  Delimited delimited = 19 [features.message_encoding = DELIMITED];
+}
+
+// Legacy nesting: this one lands INSIDE the file class as
+// KitchenProto.NestedInFileClass, so class resolution cannot be a naming
+// convention — it has to read the resolved feature off the descriptor.
+message NestedInFileClass {
+  option features.(pb.java).nest_in_file_class = YES;
+
+  string id = 1;
+}

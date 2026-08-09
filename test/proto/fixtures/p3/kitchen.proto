@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package fixtures.p3;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+option java_multiple_files = true;
+option java_package = "com.acme.fixtures.p3";
+
+// proto3 arm of the fixture matrix.
+//   field_presence = IMPLICIT by default, EXPLICIT for `optional` fields.
+// str_field/int_field are implicit (no hasser); opt_str/opt_int are explicit.
+// This is the arm where absent-vs-default is genuinely unobservable, and the
+// codec must not pretend otherwise.
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+  COLOR_BLUE = 2;
+}
+
+message Nested {
+  string id = 1;
+}
+
+message Kitchen {
+  string str_field = 1;
+  int32 int_field = 2;
+  bool bool_field = 3;
+  bytes bytes_field = 4;
+  double dbl_field = 5;
+  int64 long_field = 6;
+  Color enum_field = 7;
+  Nested msg_field = 8;
+  repeated string tags = 9;
+  repeated Nested children = 10;
+  map<string, int32> counts = 11;
+
+  oneof choice {
+    string choice_str = 12;
+    int32 choice_int = 13;
+    Nested choice_msg = 14;
+  }
+
+  google.protobuf.Timestamp ts = 15;
+  google.protobuf.Duration dur = 16;
+  google.protobuf.StringValue wrapped = 17;
+
+  optional string opt_str = 18;
+  optional int32 opt_int = 19;
+}

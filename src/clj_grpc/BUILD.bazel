@@ -1,0 +1,50 @@
+load("@rules_clojure//:rules.bzl", "clojure_binary", "clojure_library")
+load("//bazel:native_image.bzl", "native_image")
+
+package(default_visibility = ["//visibility:public"])
+
+# For //test:sandbox_conformance_test, which greps the source.
+exports_files(["plugin.clj"])
+
+# AOT matters here beyond startup time: native_image consumes compiled classes.
+clojure_library(
+    name = "plugin",
+    srcs = ["plugin.clj"],
+    aot = ["clj-grpc.plugin"],
+    resource_strip_prefix = "src",
+    deps = [
+        "@maven//:com_google_protobuf_protobuf_java",
+        "@maven//:org_clojure_clojure",
+    ],
+)
+
+# The JVM plugin. protoc only requires something that reads a
+# CodeGeneratorRequest on stdin and writes the response to stdout, so a launcher
+# script qualifies — but it needs a JVM on the user's machine, which no other
+# protoc plugin does. So the native binary is what ships; this is what the tests
+# generate with, and it is also the input to native-image via its _deploy.jar.
+#
+# The native binary IS built by Bazel: see :protoc_gen_clojure below.
+clojure_binary(
+    name = "protoc_gen_clojure_jvm",
+    main_class = "clj_grpc.plugin",
+    deps = [
+        ":plugin",
+        "@maven//:com_google_protobuf_protobuf_java",
+        "@maven//:org_clojure_clojure",
+    ],
+)
+
+# The shipped artifact. See //bazel:native_image.bzl for why this is a local,
+# unsandboxed action rather than rules_graalvm's rule.
+#
+native_image(
+    name = "protoc_gen_clojure",
+    binary_name = "protoc-gen-clojure",
+    extra_args = [
+        "--no-fallback",
+        "--initialize-at-build-time",
+        "-H:+ReportExceptionStackTraces",
+    ],
+    jar = ":protoc_gen_clojure_jvm_deploy.jar",
+)

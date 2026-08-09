@@ -1,0 +1,27 @@
+matrix:
+  platform: ["debian11", "macos", "ubuntu2204"]
+  bazel: ["8.x", "9.x"]
+
+tasks:
+  verify_targets:
+    name: build the rule and its toolchain
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@protoc_gen_clojure//bazel:defs.bzl"
+      - "@protoc_gen_clojure//bazel:toolchain_type"
+
+bcr_test_module:
+  module_path: "examples/bzlmod"
+  matrix:
+    platform: ["debian11", "macos", "ubuntu2204"]
+    bazel: ["8.x", "9.x"]
+  tasks:
+    run_tests:
+      name: generate Clojure through the prebuilt plugin
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - "//:hello_clj"
+      test_targets:
+        - "//:generated_test"

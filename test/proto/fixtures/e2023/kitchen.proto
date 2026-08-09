@@ -1,0 +1,64 @@
+edition = "2023";
+
+package fixtures.e2023;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+// Still legal in 2023; nest_in_file_class defaults to Legacy, which honours it.
+// Removed in 2024 — see ../e2024/kitchen.proto.
+option java_multiple_files = true;
+option java_package = "com.acme.fixtures.e2023";
+
+// edition 2023 arm.
+//   field_presence          = EXPLICIT (default)
+//   enum_type               = OPEN
+//   repeated_field_encoding = PACKED
+//   utf8_validation         = VERIFY
+// implicit_field exercises an opted-out field alongside explicit ones, and
+// legacy_required exercises LEGACY_REQUIRED, which has no editions-2024 removal
+// but is the only way proto2's `required` survives.
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+  COLOR_BLUE = 2;
+}
+
+message Nested {
+  string id = 1;
+}
+
+message Kitchen {
+  string str_field = 1;
+  int32 int_field = 2;
+  bool bool_field = 3;
+  bytes bytes_field = 4;
+  double dbl_field = 5;
+  int64 long_field = 6;
+  Color enum_field = 7;
+  Nested msg_field = 8;
+  repeated string tags = 9;
+  repeated Nested children = 10;
+  map<string, int32> counts = 11;
+
+  oneof choice {
+    string choice_str = 12;
+    int32 choice_int = 13;
+    Nested choice_msg = 14;
+  }
+
+  google.protobuf.Timestamp ts = 15;
+  google.protobuf.Duration dur = 16;
+  google.protobuf.StringValue wrapped = 17;
+
+  string implicit_field = 18 [features.field_presence = IMPLICIT];
+
+  // group-like: DELIMITED encoding, same scope, field name == lowercased type name
+  Delimited delimited = 19 [features.message_encoding = DELIMITED];
+}
+
+message Delimited {
+  string note = 1;
+}
