@@ -234,7 +234,10 @@ jobs:
 
       # rules_img reads credentials from the Docker config; this writes it without
       # needing a Docker daemon for the push itself.
-      - uses: docker/login-action@v3
+      #
+      # v4 is Node 24 and ESM internally; its inputs are unchanged from v3, so the
+      # three below are all still current.
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
