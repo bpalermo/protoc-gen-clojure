@@ -34,12 +34,10 @@ jobs:
           version="${TAG#v}"
           echo "releasing $version"
 
-          # plugin.clj is what the binary reports as --version.
-          # The optional -suffix is what makes a rehearsal tag possible: without
-          # it this regex yields nothing for "0.1.0-rc1", the comparison fails, and
-          # a prerelease can never be cut.
-          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' src/protoc_gen_clojure/plugin.clj \
-                     | tr -d ' "' | head -1)
+          # Read from the workspace-status script rather than re-parsing
+          # plugin.clj here. Two copies of a version parser drift, and the symptom
+          # only shows up when cutting a release — which is this job's whole job.
+          declared=$(bazel/tools/workspace_status.sh | awk '$1 == "STABLE_VERSION" { print $2 }')
           if [ "$declared" != "$version" ]; then
             echo "::error::plugin.clj declares '$declared' but the tag is '$version'" >&2
             exit 1
@@ -204,6 +202,41 @@ jobs:
         protoc-gen-clojure-module.tar.gz
         protoc-gen-clojure_*
       tag_name: ${{ inputs.tag_name || github.ref_name }}
+
+  # Pushed after the release exists, so a failed push cannot leave a published
+  # image referring to a release that was never cut. Linux-only, like the image.
+  push-image:
+    needs: [check, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Stamped tags include the commit, so the status script needs real git
+          # history rather than a shallow clone's grafted HEAD.
+          fetch-depth: 0
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          cache-save: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: musl toolchain (the image contains the static Linux binary)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends musl-tools zlib1g-dev
+
+      # rules_img reads credentials from the Docker config; this writes it without
+      # needing a Docker daemon for the push itself.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: push the plugin image
+        run: bazel run //bazel/dev:push
 
   publish-to-bcr:
     needs: release
