@@ -239,6 +239,24 @@ jobs:
       - name: push the plugin image
         run: bazel run //bazel/dev:push
 
+  # Publishing the release is the LAST thing that happens, because it is the only
+  # irreversible, publicly visible step. Everything before it can be re-run.
+  #
+  # This job used to live inside publish-to-bcr.yml, which made it run before
+  # push-image — so a failed image push left a public release with no image. A
+  # nested reusable workflow cannot wait on its caller's sibling jobs, so
+  # finalization has to be here.
+  finalize:
+    needs: [check, publish-to-bcr, push-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - env:
+          TAG: ${{ inputs.tag_name || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+
   publish-to-bcr:
     needs: release
     uses: ./.github/workflows/publish-to-bcr.yml

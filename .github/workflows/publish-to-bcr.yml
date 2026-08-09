@@ -14,6 +14,11 @@ on:
         type: string
 
   # Retry by hand if the release succeeded but publishing did not.
+  #
+  # NB this does NOT publish the release. Finalization lives in release.yml, gated
+  # on both the BCR publish and the image push, so a manual retry leaves the release
+  # a draft until it is published deliberately:
+  #   gh release edit vX.Y.Z --draft=false
   workflow_dispatch:
     inputs:
       tag_name:
@@ -57,18 +62,3 @@ jobs:
     # send an empty string, and the failure would be an opaque git auth error at
     # push time.
     secrets: inherit
-
-  # release_ruleset leaves the release as a draft so attestations can be attached
-  # while it is still mutable. Nothing else finalises it, so do it here — after
-  # publishing, so a failed BCR push leaves the release unpublished rather than
-  # half-announced.
-  finalize:
-    needs: publish-to-bcr
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - env:
-          TAG: ${{ inputs.tag_name }}
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
