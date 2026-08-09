@@ -68,7 +68,14 @@ jobs:
             os_arch: linux_x86_64
           - runner: ubuntu-24.04-arm
             os_arch: linux_aarch64
-          - runner: macos-13
+          # macos-15-intel, not macos-13: that image was retired in December
+          # 2025 and the label can no longer be assigned, so a job requesting it
+          # queues forever rather than failing fast. macos-15-intel is GitHub's
+          # last Intel image and is itself slated to go in Fall 2027 — after
+          # which darwin_x86_64 needs a different answer (cross-build with
+          # -arch x86_64, or drop it). GraalVM cannot cross-compile, so this leg
+          # genuinely requires an Intel host today.
+          - runner: macos-15-intel
             os_arch: darwin_x86_64
           - runner: macos-latest
             os_arch: darwin_arm64
