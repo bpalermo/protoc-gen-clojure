@@ -203,10 +203,14 @@ jobs:
         protoc-gen-clojure_*
       tag_name: ${{ inputs.tag_name || github.ref_name }}
 
-  # Pushed after the release exists, so a failed push cannot leave a published
-  # image referring to a release that was never cut. Linux-only, like the image.
+  # Pushed only after BCR publishing succeeds, which is also when the release stops
+  # being a draft. Depending on `release` alone was not enough: that job leaves a
+  # DRAFT, so a failed BCR push produced a published image for a release nobody
+  # could see. Nothing was corrupted — tags are immutable and the builds
+  # reproducible — but it contradicted the property the draft/finalise flow exists
+  # for, that nothing is announced until the whole pipeline succeeds.
   push-image:
-    needs: [check, release]
+    needs: [check, publish-to-bcr]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -240,5 +244,6 @@ jobs:
     uses: ./.github/workflows/publish-to-bcr.yml
     with:
       tag_name: ${{ inputs.tag_name || github.ref_name }}
-    secrets:
-      bcr_publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}
+    # See publish-to-bcr.yml: the token is an environment secret, so it is
+    # inherited rather than mapped explicitly.
+    secrets: inherit

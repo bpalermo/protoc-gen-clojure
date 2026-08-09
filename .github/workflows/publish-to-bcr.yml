@@ -12,9 +12,6 @@ on:
       tag_name:
         required: true
         type: string
-    secrets:
-      bcr_publish_token:
-        required: true
 
   # Retry by hand if the release succeeded but publishing did not.
   workflow_dispatch:
@@ -32,16 +29,34 @@ jobs:
       # A fork of bazelbuild/bazel-central-registry that the token can push a
       # branch to; the PR is opened from there against upstream.
       registry_fork: bpalermo/bazel-central-registry
+      # The PAT lives in the `bcr-publish` deployment environment, whose policy
+      # allows only tags matching v*, so a pull request cannot reach it. The
+      # environment must be passed as an INPUT: a `uses:` job cannot declare
+      # `environment:` itself (actions/runner#1490), which is why this input exists.
+      #
+      # The environment secret must be named PUBLISH_TOKEN. With `secrets: inherit`
+      # GitHub matches by name, and the upstream job reads `secrets.publish_token`
+      # (names are case-insensitive). A secret named BCR_PUBLISH_TOKEN would not
+      # satisfy it — that name only works on the repository-secret path, where the
+      # caller maps it explicitly, which is impossible here because this caller
+      # cannot read an environment secret.
+      environment: bcr-publish
+      # Required with immutable releases: the release is still a draft while this
+      # runs, so downloading assets by release URL would 404. Upstream defaults it
+      # to true, but it is load-bearing for the draft/finalise flow, so state it.
+      download_default_release_artifacts: true
       # attest defaults to true and stays that way. It is only accepted because
       # the archive comes from release_ruleset — see the comment in release.yml.
     permissions:
       attestations: write
       contents: write
       id-token: write
-    secrets:
-      # Classic PAT with `repo` and `workflow` scope. A fine-grained token cannot
-      # open a pull request against a public repository.
-      publish_token: ${{ secrets.bcr_publish_token }}
+    # inherit, not an explicit mapping. The token is an environment secret, and
+    # this caller job cannot read it — only the callee's job, which declares the
+    # environment, can. Passing `publish_token: ${{ secrets.… }}` from here would
+    # send an empty string, and the failure would be an opaque git auth error at
+    # push time.
+    secrets: inherit
 
   # release_ruleset leaves the release as a draft so attestations can be attached
   # while it is still mutable. Nothing else finalises it, so do it here — after
