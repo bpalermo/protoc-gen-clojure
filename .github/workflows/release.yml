@@ -91,6 +91,13 @@ jobs:
           # separate caches; Bazel and the action handle that between them.
           disk-cache: release
           repository-cache: true
+          # Same rule as ci.yml: only main writes caches. Two reasons here —
+          # workflow_dispatch can target any branch (a branch dry run already left
+          # 1.7GB of orphaned caches behind), and a real release runs on a TAG ref,
+          # whose caches no future run can ever read. Saving on a tag is pure quota
+          # burn. Tag runs still RESTORE main's caches, since the default branch is
+          # readable from any ref.
+          cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       # The same target CI builds and //test:distribution_test exercises, so the
       # released binary is produced exactly as the tested one is. GraalVM comes
@@ -150,6 +157,13 @@ jobs:
         with:
           bazelisk-cache: true
           repository-cache: true
+          # Same rule as ci.yml: only main writes caches. Two reasons here —
+          # workflow_dispatch can target any branch (a branch dry run already left
+          # 1.7GB of orphaned caches behind), and a real release runs on a TAG ref,
+          # whose caches no future run can ever read. Saving on a tag is pure quota
+          # burn. Tag runs still RESTORE main's caches, since the default branch is
+          # readable from any ref.
+          cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       # The same check //test:distribution_test runs, pointed at the DOWNLOADED
       # asset rather than a graph artifact. protoc and buf arrive as hermetic
@@ -180,6 +194,13 @@ jobs:
         with:
           bazelisk-cache: true
           repository-cache: true
+          # Same rule as ci.yml: only main writes caches. Two reasons here —
+          # workflow_dispatch can target any branch (a branch dry run already left
+          # 1.7GB of orphaned caches behind), and a real release runs on a TAG ref,
+          # whose caches no future run can ever read. Saving on a tag is pure quota
+          # burn. Tag runs still RESTORE main's caches, since the default branch is
+          # readable from any ref.
+          cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       # No setup-java: .bazelrc pins --java_runtime_version=remotejdk_21, so Bazel
       # brings its own JDK and an action-installed one would only shadow it.
