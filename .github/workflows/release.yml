@@ -182,8 +182,8 @@ jobs:
   # — which is what this workflow used to do — would not be accepted.
   #
   # draft: true is required for attestations to coexist with immutable releases:
-  # assets must be attached while the release is still mutable. The finalize job in
-  # publish-to-bcr.yml flips it to published.
+  # assets must be attached while the release is still mutable. The finalize job
+  # below flips it to published.
   release:
     needs: [check, native, distribution]
     permissions:
@@ -242,10 +242,9 @@ jobs:
   # Publishing the release is the LAST thing that happens, because it is the only
   # irreversible, publicly visible step. Everything before it can be re-run.
   #
-  # This job used to live inside publish-to-bcr.yml, which made it run before
-  # push-image — so a failed image push left a public release with no image. A
-  # nested reusable workflow cannot wait on its caller's sibling jobs, so
-  # finalization has to be here.
+  # It has to live in this workflow rather than alongside the BCR publish: when it
+  # did, it ran before push-image, so a failed image push left a public release
+  # with no image. A called workflow cannot wait on its caller's sibling jobs.
   finalize:
     needs: [check, publish-to-bcr, push-image]
     runs-on: ubuntu-latest
@@ -257,11 +256,73 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
 
+  # Called DIRECTLY, not through a local wrapper workflow, and that is
+  # load-bearing rather than tidiness.
+  #
+  # This used to be `uses: ./.github/workflows/publish-to-bcr.yml`, a thin wrapper
+  # that existed to share the input block with a manual-retry entry point. That
+  # made the whole `release` workflow fail startup validation — every job,
+  # including the four native builds, refused to start — because `publish_token`
+  # is a REQUIRED secret of the workflow below and `secrets: inherit` cannot
+  # satisfy a required secret one level down: a wrapper's inherited secret set is
+  # not statically known, so validation cannot prove the secret is present.
+  #
+  # Bisected with `if: false` probe workflows, which are validated at startup but
+  # never executed:
+  #   - publish.yaml called directly, `secrets: inherit`           -> valid
+  #   - trivial local wrapper, `secrets: inherit`                  -> valid
+  #   - wrapper DECLARING `publish_token` and mapping it onward    -> valid
+  #   - wrapper relying on `secrets: inherit` for it               -> STARTUP FAILURE
+  #
+  # The one shape that validated and would have kept a wrapper — declaring
+  # `publish_token` in the wrapper's own `workflow_call.secrets` — cannot work
+  # here, because the token is an ENVIRONMENT secret: nothing at this level can
+  # read it, so the wrapper would forward an empty string and fail at git push
+  # time with an opaque auth error. Only the job that declares the environment can
+  # resolve it, and that job is inside the workflow below.
+  #
+  # There is deliberately no manual-retry workflow any more. GitHub's "Re-run
+  # failed jobs" on this run is the retry, and it does not need a second copy of
+  # the configuration below to drift out of step.
   publish-to-bcr:
     needs: release
-    uses: ./.github/workflows/publish-to-bcr.yml
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    uses: bazel-contrib/publish-to-bcr/.github/workflows/publish.yaml@v1.4.2
     with:
       tag_name: ${{ inputs.tag_name || github.ref_name }}
-    # See publish-to-bcr.yml: the token is an environment secret, so it is
-    # inherited rather than mapped explicitly.
+      # A fork of bazelbuild/bazel-central-registry that the token can push a
+      # branch to; the pull request is opened from there against upstream.
+      registry_fork: bpalermo/bazel-central-registry
+      # A prerelease pushes the entry branch to the fork but stops short of the
+      # upstream pull request. Two reasons, both because that pull request targets
+      # a repository this project does not own:
+      #
+      #   - BCR is add-only. A merged 0.1.0-rc1 entry is permanent, and nobody
+      #     wants a release candidate in the registry they resolve deps from.
+      #   - Rehearsing the pipeline must not spend BCR reviewers' attention.
+      #
+      # Upstream's `Push to fork` step carries no `if`, so a rehearsal still
+      # exercises token auth, asset download, attestation and entry generation.
+      # When this is false a step emits a URL for opening the pull request by
+      # hand, which is the escape hatch if a prerelease ever needs publishing.
+      open_pull_request: ${{ !contains(inputs.tag_name || github.ref_name, '-') }}
+      # The PAT lives in the `bcr-publish` deployment environment, whose policy
+      # allows only tags matching v*, so a pull request cannot reach it. The
+      # environment is passed as an INPUT because a `uses:` job cannot declare
+      # `environment:` itself (actions/runner#1490); the callee's job declares it,
+      # which is also the only place the environment secret can be resolved.
+      #
+      # The secret must be named PUBLISH_TOKEN. With `secrets: inherit` GitHub
+      # matches by name and the callee reads `secrets.publish_token` (names are
+      # case-insensitive). BCR_PUBLISH_TOKEN would not satisfy it.
+      environment: bcr-publish
+      # Required with immutable releases: the release is still a draft while this
+      # runs, so downloading assets by release URL would 404. Upstream defaults it
+      # to true, but it is load-bearing for the draft/finalise flow, so state it.
+      download_default_release_artifacts: true
+      # attest defaults to true and stays that way. It is only accepted because
+      # the archive comes from release_ruleset — see the comment above.
     secrets: inherit
