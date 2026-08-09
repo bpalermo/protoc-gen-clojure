@@ -51,6 +51,12 @@ curl -fsSLo protoc-gen-clojure \
 chmod +x protoc-gen-clojure && mv protoc-gen-clojure /usr/local/bin/
 ```
 
+The Linux binaries are dynamically linked and carry a glibc floor (currently
+2.39), so a sufficiently old distribution will reject them with
+`GLIBC_2.xx not found`. The release asserts that floor so it cannot drift
+unnoticed. Static linking would remove it, but GraalVM's `--static` requires a
+musl-built `libz.a` that neither the Ubuntu packages nor a zig toolchain provide.
+
 On macOS, a binary downloaded from the internet carries a quarantine attribute
 and will be killed on first run. Clear it:
 

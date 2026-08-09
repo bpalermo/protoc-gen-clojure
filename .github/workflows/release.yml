@@ -89,7 +89,6 @@ jobs:
           # Only main writes caches; see ci.yml. A tag ref's caches could never be
           # read by anything anyway.
           cache-save: ${{ github.ref == 'refs/heads/main' }}
-
       - name: build the native binary
         run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure
 
@@ -104,6 +103,30 @@ jobs:
             linux_aarch64) file "$out" | grep -q "ELF 64-bit.*aarch64" ;;
             darwin_x86_64) file "$out" | grep -q "Mach-O 64-bit.*x86_64" ;;
             darwin_arm64)  file "$out" | grep -q "Mach-O 64-bit.*arm64" ;;
+          esac
+
+          # Report and bound the glibc floor of the Linux binaries.
+          #
+          # They are dynamically linked: GraalVM's --static needs a musl-built
+          # libz.a, which neither zlib1g-dev nor a zig toolchain provides (see the
+          # tracking issue). So the floor is whatever the build runner's glibc is,
+          # and a user on an older distribution gets "GLIBC_2.xx not found" from a
+          # binary that ran fine in CI.
+          #
+          # Asserting it makes the floor a deliberate, visible property rather than
+          # an accident of the runner image: bumping the runner will fail here
+          # instead of silently narrowing who can run the release.
+          case "${{ matrix.os_arch }}" in
+            linux_*)
+              floor=$(objdump -T "$out" 2>/dev/null \
+                | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
+              echo "glibc floor: ${floor:-none}"
+              max="GLIBC_2.39"
+              if [ -n "$floor" ] && [ "$(printf '%s\n%s\n' "$floor" "$max" | sort -V | tail -1)" != "$max" ]; then
+                echo "::error::glibc floor $floor exceeds $max; the runner image moved" >&2
+                exit 1
+              fi
+              ;;
           esac
 
       - name: it runs, and reports the release version

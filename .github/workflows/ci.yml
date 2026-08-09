@@ -54,11 +54,6 @@ jobs:
           # write branch-scoped caches and evict main's from the shared 10GB quota.
           # The rule we actually want is "main writes, everything else reads".
           cache-save: ${{ github.ref == 'refs/heads/main' }}
-
-      # Lint first, and as its own step: it is fast, and a failure here should be
-      # attributable to lint rather than buried among the other tests. These are
-      # ordinary test targets tagged `lint`, so the full run below covers them
-      # too — this step exists for a clear signal, not for enforcement.
       - name: lint (buf, shellcheck, formatting)
         run: bazel test //... --test_tag_filters=lint --test_output=errors
 
