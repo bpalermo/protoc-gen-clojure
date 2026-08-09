@@ -1,0 +1,16 @@
+# Ownership for review routing: pull requests touching these paths automatically
+# request review from the owner.
+#
+# NOTE on the ruleset: `require_code_owner_review` must stay OFF while there is a
+# single owner. GitHub does not count a code owner's approval of their own pull
+# request, so with one owner who authors everything the requirement can never be
+# satisfied and every PR deadlocks. Turn it on when there is a second maintainer.
+
+* @bpalermo
+
+# The release and publishing surface is the highest-consequence part of the repo:
+# a mistake here is only discovered when a release is cut, and BCR entries are
+# add-only once published.
+/.github/workflows/ @bpalermo
+/.bcr/             @bpalermo
+/bazel/            @bpalermo
