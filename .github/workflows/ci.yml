@@ -47,7 +47,13 @@ jobs:
           # The cost is that a PR no longer accumulates its own disk cache across
           # pushes. It still restores main's, so runs are warm, just not
           # incremental.
-          cache-save: ${{ github.event_name != 'pull_request' }}
+          #
+          # Gated on the REF, not the event. `event_name != 'pull_request'` looked
+          # equivalent and is not: this workflow also has workflow_dispatch, which
+          # can target any branch, so a manual run on a feature branch would still
+          # write branch-scoped caches and evict main's from the shared 10GB quota.
+          # The rule we actually want is "main writes, everything else reads".
+          cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       # Lint first, and as its own step: it is fast, and a failure here should be
       # attributable to lint rather than buried among the other tests. These are
