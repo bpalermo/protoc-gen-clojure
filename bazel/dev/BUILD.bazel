@@ -96,17 +96,28 @@ image_layer(
         # protoc execs it, so the executable bit is not optional.
         "/protoc-gen-clojure": file_metadata(mode = "0755"),
     },
+    # Same reason as the manifest: this is where the host-native binary would get
+    # packaged, so the constraint belongs here too.
+    target_compatible_with = ["@platforms//os:linux"],
 )
 
 image_manifest(
     name = "image",
-    # cmd is unset deliberately: the plugin takes no arguments. It reads a
+    base = "@distroless_base",
+    # [] explicitly UNSETS the cmd inherited from the base, rather than leaving it
+    # to be inherited. The plugin takes no arguments: it reads a
     # CodeGeneratorRequest on stdin and writes the response to stdout, which is the
     # whole protocol, and is also why it satisfies the BSR sandbox.
-    base = "@distroless_base",
     cmd = [],
     entrypoint = ["/protoc-gen-clojure"],
     layers = [":plugin_layer"],
+    # Declared, not inherited. The image was already incompatible on macOS, but
+    # only incidentally — the constraint came from the pulled base's platform. If
+    # the base were ever swapped for a multi-platform index that protection would
+    # vanish silently, and the result would be a host-native (darwin) binary
+    # packaged into a Linux image: something that builds, pushes, and then cannot
+    # run. GraalVM cannot cross-compile, so a Linux binary requires a Linux host.
+    target_compatible_with = ["@platforms//os:linux"],
 )
 
 # Not wired into any workflow: there is no destination yet. Kept so the push path
