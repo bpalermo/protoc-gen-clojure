@@ -156,7 +156,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v6
+      # v8 is what release_ruleset itself pins, so both halves of the release now
+      # download artifacts with the same implementation. It also errors on a digest
+      # mismatch rather than warning, which is the behaviour worth having on the job
+      # that validates the binary we are about to publish.
+      - uses: actions/download-artifact@v8
         with:
           name: binary-linux_x86_64
           path: dl
