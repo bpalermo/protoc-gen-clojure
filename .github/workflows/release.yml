@@ -78,7 +78,11 @@ jobs:
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          disk-cache: release-${{ matrix.os_arch }}
+          # Just "release": setup-bazel already prefixes every key with the
+          # runner platform (setup-bazel-1-darwin-arm64-disk-..., -linux-x64-...),
+          # so adding matrix.os_arch stated it twice. The four legs still get four
+          # separate caches; Bazel and the action handle that between them.
+          disk-cache: release
           repository-cache: true
 
       # The same target CI builds and //test:distribution_test exercises, so the
