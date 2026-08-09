@@ -90,6 +90,12 @@ jobs:
           # read by anything anyway.
           cache-save: ${{ github.ref == 'refs/heads/main' }}
 
+      # Linux only; the darwin legs stay dynamically linked because Apple does not
+      # support static executables.
+      - name: musl toolchain (for the static Linux binary)
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends musl-tools zlib1g-dev
+
       - name: build the native binary
         run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure
 
@@ -104,6 +110,19 @@ jobs:
             linux_aarch64) file "$out" | grep -q "ELF 64-bit.*aarch64" ;;
             darwin_x86_64) file "$out" | grep -q "Mach-O 64-bit.*x86_64" ;;
             darwin_arm64)  file "$out" | grep -q "Mach-O 64-bit.*arm64" ;;
+          esac
+
+          # The Linux binaries must be STATIC. Passing --static is not evidence
+          # that it worked: native-image can fall back to dynamic linking, and the
+          # symptom would be a user on an older distro getting
+          # "GLIBC_2.xx not found" from a download that ran fine on the runner.
+          case "${{ matrix.os_arch }}" in
+            linux_*)
+              file "$out" | grep -qE "statically linked|static-pie linked" \
+                || { echo "::error::expected a statically linked binary" >&2; exit 1; }
+              ldd "$out" 2>&1 | grep -q "not a dynamic executable" \
+                || { echo "::error::ldd reports dynamic dependencies" >&2; ldd "$out"; exit 1; }
+              ;;
           esac
 
       - name: it runs, and reports the release version

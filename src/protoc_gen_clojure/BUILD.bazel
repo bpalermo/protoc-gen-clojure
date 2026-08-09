@@ -45,6 +45,20 @@ native_image(
         "--no-fallback",
         "--initialize-at-build-time",
         "-H:+ReportExceptionStackTraces",
-    ],
+    ] + select({
+        # Static musl on Linux, so the released binary does not carry a glibc
+        # version floor. A dynamically linked binary built on a current runner
+        # fails on older distros with "GLIBC_2.xx not found", and users download
+        # these rather than building them.
+        #
+        # Linux only: Apple does not support statically linked executables, so the
+        # darwin legs stay dynamic. Requires musl-gcc and a musl-built static zlib
+        # in the environment — see the workflows.
+        "@platforms//os:linux": [
+            "--static",
+            "--libc=musl",
+        ],
+        "//conditions:default": [],
+    }),
     jar = ":protoc_gen_clojure_jvm_deploy.jar",
 )

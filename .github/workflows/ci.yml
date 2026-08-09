@@ -55,6 +55,13 @@ jobs:
           # The rule we actually want is "main writes, everything else reads".
           cache-save: ${{ github.ref == 'refs/heads/main' }}
 
+      # native-image --static --libc=musl needs a musl toolchain and a musl-built
+      # static zlib. musl-tools provides musl-gcc; zlib1g-dev supplies the headers
+      # GraalVM builds its static zlib from. The Linux binary is built here as part
+      # of //test:distribution_test, so the toolchain has to be present.
+      - name: musl toolchain (for the static Linux binary)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends musl-tools zlib1g-dev
+
       # Lint first, and as its own step: it is fast, and a failure here should be
       # attributable to lint rather than buried among the other tests. These are
       # ordinary test targets tagged `lint`, so the full run below covers them

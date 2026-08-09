@@ -51,6 +51,10 @@ curl -fsSLo protoc-gen-clojure \
 chmod +x protoc-gen-clojure && mv protoc-gen-clojure /usr/local/bin/
 ```
 
+The Linux binaries are statically linked against musl, so they carry no glibc
+version floor and run on old and new distributions alike. The macOS binaries are
+dynamically linked — Apple does not support static executables.
+
 On macOS, a binary downloaded from the internet carries a quarantine attribute
 and will be killed on first run. Clear it:
 
