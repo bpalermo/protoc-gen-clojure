@@ -11,7 +11,7 @@ tarball, so the archive BCR serves always has real checksums.
 
 Consequence: a consumer must depend on a released version, not on a raw git
 checkout. Building from a git checkout is a development flow, and it uses
-//src/clj_grpc:protoc_gen_clojure directly rather than this table.
+//src/protoc_gen_clojure:protoc_gen_clojure directly rather than this table.
 """
 
 # version this table describes; the release workflow rewrites it.

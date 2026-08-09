@@ -33,7 +33,7 @@ say whether the native artifact was run.
 - [ ] `plugin.clj` remains a pure function of the `CodeGeneratorRequest`
       (`//test:sandbox_conformance_test`) — no filesystem, network or env, or the
       plugin stops being publishable to the BSR.
-- [ ] Version bumped in **both** `src/clj_grpc/plugin.clj` and `MODULE.bazel` if
+- [ ] Version bumped in **both** `src/protoc_gen_clojure/plugin.clj` and `MODULE.bazel` if
       this is a release; the release workflow refuses a mismatch.
 
 ## Risks and follow-ups

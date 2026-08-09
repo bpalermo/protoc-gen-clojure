@@ -40,7 +40,7 @@ clojure_proto_library(
         "fixtures/p2/kitchen.clj",
         "fixtures/p3/kitchen.clj",
     ],
-    plugin = "//src/clj_grpc:protoc_gen_clojure_jvm",
+    plugin = "//src/protoc_gen_clojure:protoc_gen_clojure_jvm",
     proto = ":fixtures_proto",
 )
 

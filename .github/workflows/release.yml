@@ -38,7 +38,7 @@ jobs:
           # The optional -suffix is what makes a rehearsal tag possible: without
           # it this regex yields nothing for "0.1.0-rc1", the comparison fails, and
           # a prerelease can never be cut.
-          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' src/clj_grpc/plugin.clj \
+          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' src/protoc_gen_clojure/plugin.clj \
                      | tr -d ' "' | head -1)
           if [ "$declared" != "$version" ]; then
             echo "::error::plugin.clj declares '$declared' but the tag is '$version'" >&2
@@ -91,13 +91,13 @@ jobs:
           cache-save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: build the native binary
-        run: bazel build //src/clj_grpc:protoc_gen_clojure
+        run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure
 
       # A matrix misconfiguration would otherwise ship four copies of one host
       # build under four different names, and nothing downstream would notice.
       - name: assert the binary is actually for this platform
         run: |
-          out=bazel-bin/src/clj_grpc/protoc-gen-clojure
+          out=bazel-bin/src/protoc_gen_clojure/protoc-gen-clojure
           file "$out"
           case "${{ matrix.os_arch }}" in
             linux_x86_64)  file "$out" | grep -q "ELF 64-bit.*x86-64" ;;
@@ -110,7 +110,7 @@ jobs:
         env:
           TAG: ${{ inputs.tag_name || github.ref_name }}
         run: |
-          got="$(bazel-bin/src/clj_grpc/protoc-gen-clojure --version)"
+          got="$(bazel-bin/src/protoc_gen_clojure/protoc-gen-clojure --version)"
           echo "$got"
           echo "$got" | grep -q "${TAG#v}"
 
@@ -119,7 +119,7 @@ jobs:
           TAG: ${{ inputs.tag_name || github.ref_name }}
         run: |
           mkdir -p out
-          cp bazel-bin/src/clj_grpc/protoc-gen-clojure \
+          cp bazel-bin/src/protoc_gen_clojure/protoc-gen-clojure \
             "out/protoc-gen-clojure_${TAG#v}_${{ matrix.os_arch }}"
 
       - uses: actions/upload-artifact@v7

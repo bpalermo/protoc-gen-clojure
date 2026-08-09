@@ -10,7 +10,7 @@
   is what lets this module depend on nothing but protobuf-java."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [clj-grpc.plugin :as plugin])
+            [protoc-gen-clojure.plugin :as plugin])
   (:import [com.google.protobuf DescriptorProtos$Edition
             DescriptorProtos$DescriptorProto DescriptorProtos$FileDescriptorProto
             DescriptorProtos$MessageOptions]

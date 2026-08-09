@@ -153,7 +153,7 @@ bazel run //test:update_golden        # after an intended codegen change
 
 # The native binary is a Bazel artifact, and this runs it under real protoc and
 # buf — both hermetic — in a scratch directory with only the plugin on PATH.
-bazel build //src/clj_grpc:protoc_gen_clojure
+bazel build //src/protoc_gen_clojure:protoc_gen_clojure
 bazel test  //test:distribution_test
 
 # The same check against an arbitrary binary, e.g. a downloaded release asset:
