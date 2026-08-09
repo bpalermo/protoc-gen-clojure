@@ -1,21 +1,39 @@
+# Platforms are constrained by what the released binaries can actually run on, not
+# by what BCR offers.
+#
+# The test module executes the prebuilt plugin, and the Linux binaries are
+# dynamically linked with a glibc 2.39 floor (built on ubuntu-24.04). So the older
+# images BCR also provides — debian11 at 2.31, ubuntu2204 at 2.35 — would fail with
+# "GLIBC_2.39 not found". Listing them would open a pull request that fails its own
+# presubmit. Static linking (issue #17) is what would widen this.
+#
+# arm64 is included deliberately: it is the only place the linux_aarch64 and
+# darwin_arm64 release assets, and the toolchain's platform selection between them,
+# get exercised at all.
+#
+# bazel is 9.x only. The module has never been built with Bazel 8, and claiming
+# support that fails here would block publication rather than merely disappoint.
 matrix:
-  platform: ["debian11", "macos", "ubuntu2204"]
-  bazel: ["8.x", "9.x"]
+  platform: ["ubuntu2404", "ubuntu2404_arm64", "macos", "macos_arm64"]
+  bazel: ["9.x"]
 
 tasks:
   verify_targets:
-    name: build the rule and its toolchain
+    name: the rule and toolchain type load
     platform: ${{ platform }}
     bazel: ${{ bazel }}
     build_targets:
-      - "@protoc_gen_clojure//bazel:defs.bzl"
       - "@protoc_gen_clojure//bazel:toolchain_type"
 
+# The real test: a module that depends on this one, registers the toolchain, and
+# generates Clojure from a .proto with no Clojure, JVM or GraalVM of its own. That
+# claim is untestable anywhere else, because the toolchain downloads a binary from a
+# published release.
 bcr_test_module:
   module_path: "examples/bzlmod"
   matrix:
-    platform: ["debian11", "macos", "ubuntu2204"]
-    bazel: ["8.x", "9.x"]
+    platform: ["ubuntu2404", "ubuntu2404_arm64", "macos", "macos_arm64"]
+    bazel: ["9.x"]
   tasks:
     run_tests:
       name: generate Clojure through the prebuilt plugin
