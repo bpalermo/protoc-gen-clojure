@@ -22,8 +22,15 @@ echo "STABLE_VERSION ${version:-0.0.0-unknown}"
 commit=$(git rev-parse --short=12 HEAD 2>/dev/null)
 echo "STABLE_GIT_COMMIT ${commit:-unknown}"
 
-# Marks images built from a dirty tree, so an accidental push is identifiable.
-if git diff --quiet HEAD 2>/dev/null; then
+# Marks images built from a non-pristine tree, so an accidental push is
+# identifiable.
+#
+# `git status --porcelain` rather than `git diff --quiet HEAD`: the latter ignores
+# untracked files, and untracked files change what gets built here — several targets
+# glob (test/golden, test/proto), so a stray file lands in the output while the
+# stamp still says clean. --porcelain respects .gitignore, so bazel-* symlinks and
+# dist/ do not count.
+if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
   echo "STABLE_GIT_DIRTY clean"
 else
   echo "STABLE_GIT_DIRTY dirty"
