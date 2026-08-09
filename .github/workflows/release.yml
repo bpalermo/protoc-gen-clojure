@@ -123,12 +123,23 @@ jobs:
           # relies on. Raising this line is a deliberate act of narrowing support.
           case "${{ matrix.os_arch }}" in
             linux_*)
+              # The version pattern matches three components as well as two.
+              # glibc really does use both: this binary carries GLIBC_2.2.5,
+              # GLIBC_2.3.2 and GLIBC_2.3.4 alongside GLIBC_2.34. Matching only
+              # two would read "GLIBC_2.2.5" as "GLIBC_2.2" — harmless today,
+              # since every three-component version glibc defines is ancient and
+              # far below the maximum, but it would silently understate the floor
+              # if that ever stopped being true.
               floor=$(objdump -T "$out" 2>/dev/null \
-                | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
+                | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -uV | tail -1)
               echo "glibc floor: ${floor:-none}"
               max="GLIBC_2.34"
               if [ -n "$floor" ] && [ "$(printf '%s\n%s\n' "$floor" "$max" | sort -V | tail -1)" != "$max" ]; then
-                echo "::error::glibc floor $floor exceeds $max; the runner image moved" >&2
+                # Deliberately does not name a cause. A runner image bump is the
+                # likeliest one, but a GraalVM, toolchain or glibc change moves
+                # this too, and a message that guesses wrong sends the reader off
+                # in the wrong direction.
+                echo "::error::glibc floor $floor exceeds $max, so this release would not run everywhere the previous one did. Widen the ceiling deliberately, or find what raised the floor." >&2
                 exit 1
               fi
               ;;
