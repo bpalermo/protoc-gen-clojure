@@ -11,6 +11,19 @@ build --java_runtime_version=remotejdk_21
 build --tool_java_language_version=21
 build --tool_java_runtime_version=remotejdk_21
 
+# Use protobuf's prebuilt protoc instead of compiling one from C++ source, which
+# costs ~70 translation units to produce a binary upstream already publishes for
+# every platform we support.
+#
+# --incompatible_enable_proto_toolchain_resolution is deliberately NOT set with it:
+# measured on Bazel 9.2, protoc resolves through the toolchain regardless, and this
+# flag alone decides which binary that toolchain carries.
+#
+# It lives here rather than in MODULE.bazel so it stays a property of building THIS
+# repo. clojure_proto_library resolves whichever protoc the toolchain provides, so a
+# consumer who does not set it simply keeps compiling protoc, as before.
+common --@protobuf//bazel/toolchains:prefer_prebuilt_protoc
+
 test --test_output=errors
 
 # Stamped image tags need a git commit and the declared version; Bazel provides
