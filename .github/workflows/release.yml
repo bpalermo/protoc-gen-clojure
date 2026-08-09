@@ -244,5 +244,6 @@ jobs:
     uses: ./.github/workflows/publish-to-bcr.yml
     with:
       tag_name: ${{ inputs.tag_name || github.ref_name }}
-    secrets:
-      bcr_publish_token: ${{ secrets.BCR_PUBLISH_TOKEN }}
+    # See publish-to-bcr.yml: the token is an environment secret, so it is
+    # inherited rather than mapped explicitly.
+    secrets: inherit
