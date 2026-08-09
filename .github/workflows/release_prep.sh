@@ -9,20 +9,37 @@
 # workflow is bazel-contrib/.github's, so an archive we attested ourselves is
 # rejected.
 #
-# Prior jobs' artifacts are already extracted under ./artifacts/ by the caller,
-# which is how the per-platform native binaries reach us: they cannot be built
-# here, because GraalVM does not cross-compile and this runs on one runner.
+# Prior jobs' artifacts are extracted into the workspace by the caller, which is
+# how the per-platform native binaries reach us: they cannot be built here,
+# because GraalVM does not cross-compile and this runs on one runner.
+#
+# They do NOT land under ./artifacts/, despite that being what release_ruleset's
+# own comment claims. It runs actions/download-artifact with no `path` and no
+# `name`, whose documented behaviour is one directory per artifact under
+# $GITHUB_WORKSPACE. Observed in the v0.1.0-rc1 run log:
+#
+#   No input name, artifact-ids or pattern filtered specified, downloading all artifacts
+#   An extra directory with the artifact name will be created for each download
+#   Starting download of artifact to: /home/runner/work/…/protoc-gen-clojure/binary-linux_x86_64
 set -euo pipefail
 
 TAG="${1:?tag, e.g. v0.1.0}"
 VERSION="${TAG#v}"
 
 # Collect the binaries the matrix built. Fail loudly on a miscount rather than
-# releasing a partial set — four platforms, no more, no fewer.
-mapfile -t BINARIES < <(find artifacts -type f -name 'protoc-gen-clojure_*_*' | sort)
+# releasing a partial set — four platforms, no more, no fewer. This assertion is
+# what turned a silently-empty release into a failed job.
+#
+# Searched by filename rather than by the artifact directory name, so renaming the
+# upload cannot quietly halve a release, and so a caller that does set `path`
+# keeps working. -maxdepth 2 covers both layouts (./binary-*/f and ./artifacts/f)
+# without descending the tree, and find does not follow the bazel-* symlinks
+# because -L is not given — otherwise it would walk the whole output base.
+mapfile -t BINARIES < <(find . -maxdepth 2 -type f -name 'protoc-gen-clojure_*_*' | sort)
 if [ "${#BINARIES[@]}" -ne 4 ]; then
-  echo "expected 4 native binaries under artifacts/, found ${#BINARIES[@]}:" >&2
+  echo "expected 4 extracted native binaries in the workspace, found ${#BINARIES[@]}:" >&2
   printf '  %s\n' "${BINARIES[@]}" >&2
+  echo "the matrix uploads them as binary-<os>_<arch>; check that those jobs ran" >&2
   exit 1
 fi
 
