@@ -31,6 +31,23 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
+          # Pull requests RESTORE caches but never SAVE them, so only code that
+          # has been merged — and therefore reviewed — can populate a cache that a
+          # later trusted build consumes. Without this, an untrusted PR writes
+          # entries under keys a subsequent run may restore, which is the standard
+          # Actions cache-poisoning shape.
+          #
+          # GitHub's ref scoping already stops main from reading a PR's caches (a
+          # run sees its own ref, its base, and the default branch — never a
+          # sibling branch), so this is defence in depth rather than the only
+          # barrier. It also fixes a concrete second problem: PR caches were
+          # consuming most of the 10GB repo quota and evicting main's, which are
+          # the ones every PR restores from.
+          #
+          # The cost is that a PR no longer accumulates its own disk cache across
+          # pushes. It still restores main's, so runs are warm, just not
+          # incremental.
+          cache-save: ${{ github.event_name != 'pull_request' }}
 
       # Lint first, and as its own step: it is fast, and a failure here should be
       # attributable to lint rather than buried among the other tests. These are
