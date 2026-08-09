@@ -27,6 +27,7 @@ if [ "${#BINARIES[@]}" -ne 4 ]; then
 fi
 
 STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
 for b in "${BINARIES[@]}"; do
   cp "$b" "$STAGE/$(basename "$b")"
 done
