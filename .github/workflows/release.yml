@@ -38,7 +38,7 @@ jobs:
           # The optional -suffix is what makes a rehearsal tag possible: without
           # it this regex yields nothing for "0.1.0-rc1", the comparison fails, and
           # a prerelease can never be cut.
-          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?"' src/clj_grpc/plugin.clj \
+          declared=$(grep -oE '^  "[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?"' src/clj_grpc/plugin.clj \
                      | tr -d ' "' | head -1)
           if [ "$declared" != "$version" ]; then
             echo "::error::plugin.clj declares '$declared' but the tag is '$version'" >&2
