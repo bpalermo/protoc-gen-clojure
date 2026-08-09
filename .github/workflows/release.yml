@@ -89,13 +89,6 @@ jobs:
           # Only main writes caches; see ci.yml. A tag ref's caches could never be
           # read by anything anyway.
           cache-save: ${{ github.ref == 'refs/heads/main' }}
-
-      # Linux only; the darwin legs stay dynamically linked because Apple does not
-      # support static executables.
-      - name: musl toolchain (for the static Linux binary)
-        if: startsWith(matrix.runner, 'ubuntu')
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends musl-tools zlib1g-dev
-
       - name: build the native binary
         run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure
 
@@ -112,16 +105,27 @@ jobs:
             darwin_arm64)  file "$out" | grep -q "Mach-O 64-bit.*arm64" ;;
           esac
 
-          # The Linux binaries must be STATIC. Passing --static is not evidence
-          # that it worked: native-image can fall back to dynamic linking, and the
-          # symptom would be a user on an older distro getting
-          # "GLIBC_2.xx not found" from a download that ran fine on the runner.
+          # Report and bound the glibc floor of the Linux binaries.
+          #
+          # They are dynamically linked: GraalVM's --static needs a musl-built
+          # libz.a, which neither zlib1g-dev nor a zig toolchain provides (see the
+          # tracking issue). So the floor is whatever the build runner's glibc is,
+          # and a user on an older distribution gets "GLIBC_2.xx not found" from a
+          # binary that ran fine in CI.
+          #
+          # Asserting it makes the floor a deliberate, visible property rather than
+          # an accident of the runner image: bumping the runner will fail here
+          # instead of silently narrowing who can run the release.
           case "${{ matrix.os_arch }}" in
             linux_*)
-              file "$out" | grep -qE "statically linked|static-pie linked" \
-                || { echo "::error::expected a statically linked binary" >&2; exit 1; }
-              ldd "$out" 2>&1 | grep -q "not a dynamic executable" \
-                || { echo "::error::ldd reports dynamic dependencies" >&2; ldd "$out"; exit 1; }
+              floor=$(objdump -T "$out" 2>/dev/null \
+                | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
+              echo "glibc floor: ${floor:-none}"
+              max="GLIBC_2.39"
+              if [ -n "$floor" ] && [ "$(printf '%s\n%s\n' "$floor" "$max" | sort -V | tail -1)" != "$max" ]; then
+                echo "::error::glibc floor $floor exceeds $max; the runner image moved" >&2
+                exit 1
+              fi
               ;;
           esac
 
