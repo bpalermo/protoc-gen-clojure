@@ -17,7 +17,7 @@
 # no environment — which //test:sandbox_conformance_test enforces.
 version: v1
 name: buf.build/bpalermo/clojure
-plugin_version: v0.1.0-rc1
+plugin_version: v0.1.0
 source_url: https://github.com/bpalermo/protoc-gen-clojure
 description: Generates Clojure records, codecs and gRPC service descriptors.
 output_languages:
