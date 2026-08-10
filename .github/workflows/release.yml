@@ -50,6 +50,26 @@ jobs:
             exit 1
           fi
 
+      # Checked here rather than discovered later. Without it the BCR entry is
+      # authored with an empty email, and the failure surfaces either as an obscure
+      # git error or — worse — as a cla/google failure on a public pull request, after
+      # the release is already published and the tag can no longer move.
+      #
+      # Only the length is printed. The address itself is deliberately not echoed into
+      # a public log.
+      - name: the CLA author address must be configured
+        env:
+          BCR_AUTHOR_EMAIL: ${{ vars.BCR_AUTHOR_EMAIL }}
+        run: |
+          if [ -z "${BCR_AUTHOR_EMAIL}" ]; then
+            echo "::error::repository variable BCR_AUTHOR_EMAIL is unset. Set it to the address the Google CLA is signed under: gh variable set BCR_AUTHOR_EMAIL" >&2
+            exit 1
+          fi
+          case "${BCR_AUTHOR_EMAIL}" in
+            *@*.*) echo "BCR_AUTHOR_EMAIL is set (${#BCR_AUTHOR_EMAIL} chars)" ;;
+            *) echo "::error::BCR_AUTHOR_EMAIL does not look like an email address" >&2; exit 1 ;;
+          esac
+
   # GraalVM cannot cross-compile, so one runner per target platform.
   # https://github.com/oracle/graal/issues/407
   #
@@ -369,6 +389,23 @@ jobs:
       # runs, so downloading assets by release URL would 404. Upstream defaults it
       # to true, but it is load-bearing for the draft/finalise flow, so state it.
       download_default_release_artifacts: true
+      # The BCR entry commit's AUTHOR must be the address the Google CLA was signed
+      # under. bazelbuild/bazel-central-registry runs a `cla/google` check that reads
+      # the email on each commit, and upstream defaults author_email to
+      # `<id>+<user>@users.noreply.github.com` — not a CLA address, so v0.1.0's entry
+      # (bazelbuild/bazel-central-registry#9991) was blocked with "Missing CLA from
+      # one or more contributors" until its commit was re-authored.
+      #
+      # The address is a repository VARIABLE rather than a literal, because this repo
+      # is public and a personal email committed here would live in its git history
+      # permanently and be scrapable. The `check` job asserts the variable is set, so
+      # a missing one fails in seconds rather than as an obscure git error after four
+      # native builds.
+      #
+      # The committer stays as upstream's github-actions[bot]: the CLA check ignores
+      # bot identities, and it keeps the commit visibly machine-generated.
+      author_name: Bruno Palermo
+      author_email: ${{ vars.BCR_AUTHOR_EMAIL }}
       # attest defaults to true and stays that way. It is only accepted because
       # the archive comes from release_ruleset — see the comment above.
     # Explicitly mapped, NOT `inherit`. See the comment above this job: this
