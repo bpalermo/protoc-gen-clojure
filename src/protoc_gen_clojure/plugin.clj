@@ -208,15 +208,92 @@
              (>= (.getNumber (.getEdition fdp)) edition-2024-number)))))
 
 (defn- java-class-name
-  "Fully-qualified Java class for a message the file's options place at the top
-  level, or nil when that cannot be derived. nil means the generated code keeps
-  today's DynamicMessage prototype. A non-nil answer is a hint the runtime
-  verifies, not a guarantee — see the note above on per-message features."
-  [^DescriptorProtos$FileDescriptorProto fdp msg-name]
+  "Fully-qualified Java class for the message at `path` — the proto names from the
+  file root down, so [\"Outer\" \"Inner\"] is Outer's nested Inner. nil when the name
+  cannot be derived, which means the generated code keeps today's DynamicMessage
+  prototype. A non-nil answer is a hint the runtime verifies, not a guarantee —
+  see the note above on per-message features.
+
+  Nesting joins with `$` because that is how the JVM spells a nested class, and it
+  applies to every level below the first: Java nests Inner inside Outer whatever
+  the file options say, so only the OUTERMOST message's placement is in question
+  and that is exactly what top-level-java-class? decides."
+  [^DescriptorProtos$FileDescriptorProto fdp path]
   (let [opts (.getOptions fdp)
         pkg  (if (.hasJavaPackage opts) (.getJavaPackage opts) (.getPackage fdp))]
     (when (and (seq pkg) (top-level-java-class? fdp))
-      (str pkg "." msg-name))))
+      (str pkg "." (str/join "$" path)))))
+
+;; ---------------------------------------------------------------------------
+;; the message tree
+;;
+;; A file's messages form a tree, and until now only its roots were emitted. The
+;; two decisions that made the recursion more than a walk:
+;;
+;; WHAT THE RUNTIME IS ASKED FOR. protobuf-java offers no way to look a nested type
+;; up from the file: FileDescriptor.findMessageTypeByName returns nil for
+;; "Outer.Inner", for "Inner", for "Outer$Inner" and for the fully-qualified
+;; "pkg.Outer.Inner" alike — its javadoc's "for nested types use Foo.Bar" does not
+;; describe that method. Only Descriptor.findNestedTypeByName resolves one, walked a
+;; segment at a time. So the emitted lookup is the dotted proto path and the runtime
+;; splits it; that needs clj-protobuf >= 0.1.5.
+;;
+;; WHAT THE RECORD IS CALLED. Segments join with `-`. A proto identifier is
+;; [A-Za-z_][A-Za-z0-9_]*, so `-` cannot occur in one, and Outer-Inner therefore
+;; cannot collide with any message a schema is able to declare. `OuterInner` can:
+;; it is a legal sibling name. The dash is not free, though — defrecord munges it
+;; to `_` in the class name, so nested Outer.Inner and a top-level Outer_Inner both
+;; compile to class Outer_Inner. That one is rejected outright rather than emitted;
+;; see check-record-names!.
+;;
+;; map<k,v> fields synthesise a nested *Entry message with options.map_entry set.
+;; protobuf's own gencode emits no class for those and neither does this — they are
+;; an encoding detail, not a type the schema declared. The top-level-only walk
+;; excluded them by accident; a recursive walk has to mean it, or every proto with a
+;; map grows a bogus record.
+
+(defn- record-name
+  "Clojure record name for the message at `path`. See the note above on `-`."
+  [path]
+  (str/join "-" path))
+
+(defn- check-record-names!
+  "Refuse a file whose messages would generate the same record class.
+
+  defrecord munges `-` to `_`, so nested Outer.Inner and a top-level Outer_Inner
+  both land on class Outer_Inner and the second definition silently clobbers the
+  first — a broken namespace that compiles. protoc refuses the analogous Java
+  name collision; refusing it here costs a rename and saves a debugging session.
+  -main turns this into a CodeGeneratorResponse error, so protoc reports it."
+  [^DescriptorProtos$FileDescriptorProto fdp msgs]
+  (doseq [[munged group] (group-by #(str/replace (:record-name %) "-" "_") msgs)
+          :when (< 1 (count group))]
+    (throw (ex-info (str "record name collision in " (.getName fdp) ": "
+                         (str/join " and " (map :lookup-name group))
+                         " would both generate the record class " munged
+                         ". Rename one of them.")
+                    {:file (.getName fdp) :class munged}))))
+
+(defn- message-tree
+  "Every message declared in `fdp`, each enclosing type before the types nested in
+  it, as the maps the emitter renders. Map-entry types are skipped, at every level."
+  [^DescriptorProtos$FileDescriptorProto fdp]
+  (letfn [(walk [^DescriptorProtos$DescriptorProto md path]
+            (let [path (conj path (.getName md))]
+              (cons {:record-name (record-name path)
+                     :lookup-name (str/join "." path)
+                     :java-class  (java-class-name fdp path)
+                     :fields      (mapv (fn [^DescriptorProtos$FieldDescriptorProto f]
+                                          {:proto-name (.getName f)
+                                           :key        (field-key-symbol (.getName f))})
+                                        (.getFieldList md))}
+                    (mapcat #(walk % path)
+                            (remove (fn [^DescriptorProtos$DescriptorProto n]
+                                      (.getMapEntry (.getOptions n)))
+                                    (.getNestedTypeList md))))))]
+    (let [msgs (vec (mapcat #(walk % []) (.getMessageTypeList fdp)))]
+      (check-record-names! fdp msgs)
+      msgs)))
 
 ;; ---------------------------------------------------------------------------
 ;; emission
@@ -308,14 +385,7 @@
                   fdp
                   (-> (.toBuilder fdp) (.clearSourceCodeInfo) (.build)))
         b64     (.encodeToString (Base64/getEncoder) (.toByteArray embed))
-        msgs    (mapv (fn [^DescriptorProtos$DescriptorProto md]
-                        {:name   (.getName md)
-                         :java-class (java-class-name fdp (.getName md))
-                         :fields (mapv (fn [^DescriptorProtos$FieldDescriptorProto f]
-                                         {:proto-name (.getName f)
-                                          :key        (field-key-symbol (.getName f))})
-                                       (.getFieldList md))})
-                      (.getMessageTypeList fdp))
+        msgs    (message-tree fdp)
         ;; The type hint is load-bearing, not tidiness. Unhinted, this compiles to
         ;; a reflective call that works fine on the JVM and fails in the native
         ;; image, where no reflection metadata is registered:
@@ -323,17 +393,6 @@
         ;; Every interop call here must be hinted for the same reason.
         svcs    (mapv #(.getName ^DescriptorProtos$ServiceDescriptorProto %)
                       (.getServiceList fdp))
-        ;; Nested types get no record yet (issue #2). Emitting nothing at all
-        ;; would be silently incomplete — the file generates fine and `->Inner`
-        ;; simply does not exist — so name them in the output instead.
-        ;;
-        ;; map<k,v> fields synthesise a nested *Entry message with
-        ;; options.map_entry set. Those are an encoding detail and must not be
-        ;; listed, or every proto with a map would grow a misleading notice.
-        skipped (vec (for [^DescriptorProtos$DescriptorProto md (.getMessageTypeList fdp)
-                           ^DescriptorProtos$DescriptorProto n (.getNestedTypeList md)
-                           :when (not (.getMapEntry (.getOptions n)))]
-                       (str (.getName md) "." (.getName n))))
         sb      (StringBuilder.)
         line    #(doto sb (.append %) (.append "\n"))]
     (line (str ";; Generated by protoc-gen-clojure from " (.getName fdp) ". Do not edit."))
@@ -368,14 +427,19 @@
       (line ";; vars, and straight-line ->proto/proto-> built on them. nil means")
       (line ";; absent, which is how a record (all keys always present) maps onto")
       (line ";; protobuf explicit presence.")
-      (doseq [{msg-name :name fields :fields java-class :java-class} msgs]
+      (doseq [{msg-name :record-name lookup :lookup-name
+               fields :fields java-class :java-class} msgs]
         (line "")
         (line (str "(defrecord " msg-name " [" (str/join " " (map :key fields)) "])"))
         (line (str "(def " msg-name "-prototype (rt/message file-descriptor "
-                   (pr-str msg-name)
-                   ;; The third argument needs clj-protobuf 0.1.3 or later. Omitted
-                   ;; entirely when unknown, so files that get no hint still work
-                   ;; against older runtimes.
+                   ;; The dotted path, not the record name: this is a protobuf
+                   ;; lookup, and the runtime walks it segment by segment because
+                   ;; nothing on FileDescriptor resolves a nested type directly.
+                   (pr-str lookup)
+                   ;; The third argument needs clj-protobuf 0.1.3 or later, and a
+                   ;; dotted lookup above needs 0.1.5. Omitted entirely when
+                   ;; unknown, so files that get no hint still work against older
+                   ;; runtimes.
                    (when java-class (str " " (pr-str java-class)))
                    "))"))
         (doseq [{:keys [key proto-name]} fields]
@@ -400,14 +464,6 @@
           (line (str "    (codec/get-field msg " msg-name "--" key " opts)")))
         (line  "    )))")))
 
-
-    (when (seq skipped)
-      (line "")
-      (line ";; NOT GENERATED — nested messages are not yet emitted as records:")
-      (doseq [n skipped]
-        (line (str ";;   " n)))
-      (line ";; The enclosing message still round-trips; only the convenience")
-      (line ";; record and ->/<- functions for these types are missing."))
 
     (when (seq svcs)
       (line "")

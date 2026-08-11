@@ -99,11 +99,13 @@
     (let [big (apply str (map #(nth "ABCDEFGH" (mod % 8)) (range 100000)))]
       (is (= big (eval (read-string (#'plugin/literal big))))))))
 
-(deftest nested-types-are-declared-not-silently-dropped
-  ;; Nested messages get no record yet (#2). The failure mode to avoid is silence:
-  ;; the file generates fine and `->Inner` simply does not exist. The emitter names
-  ;; them in the output instead. Map entries must NOT be listed — map<k,v>
-  ;; synthesises a nested *Entry message that is an encoding detail.
+(deftest nested-types-are-emitted
+  ;; Nested messages used to get no record (#2); the emitter named them in a
+  ;; "NOT GENERATED" notice instead. Now they are generated, so this asserts on the
+  ;; emitted TEXT rather than on the message tree — the golden files would normally
+  ;; carry this, and until the nested fixture lands (see the PR) this is what stands
+  ;; in for them. Map entries must still produce nothing: map<k,v> synthesises a
+  ;; nested *Entry message that is an encoding detail, not a declared type.
   (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
                 (.setName "demo/nest.proto")
                 (.addMessageType
@@ -119,10 +121,20 @@
                                            (.setMapEntry true)))))))
                 (.build))
         out (plugin/emit-namespace fdp (constantly false) nil false)]
-    (is (str/includes? out "NOT GENERATED") "the gap is stated in the output")
-    (is (str/includes? out "Outer.Inner") "the nested type is named")
+    (is (str/includes? out "(defrecord Outer-Inner [")
+        "the nested type gets a record, named so it cannot collide with a message
+         the schema could declare")
+    (is (str/includes? out "(rt/message file-descriptor \"Outer.Inner\"")
+        "and is looked up by its dotted proto path, the only spelling the runtime
+         can resolve a nested type from")
+    (is (str/includes? out "(defn Outer-Inner->proto")
+        "with the conversion functions, which are the point of the record")
+    (is (str/includes? out "(defn proto->Outer-Inner"))
+    (is (not (str/includes? out "NOT GENERATED"))
+        "the notice describing the gap must go with the gap")
     (is (not (str/includes? out "CountsEntry"))
-        "a synthetic map entry must not be reported as a missing type")))
+        "a synthetic map entry gets no record — protobuf's own gencode emits no
+         class for one either")))
 
 (deftest runtime-namespaces-are-configurable
   ;; The requires this emits are the real public API — they are written into every
@@ -197,7 +209,7 @@
     (is (= "com.acme.Tiny"
            (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"
                                            :multiple-files? true})
-                                     "Tiny"))))
+                                     ["Tiny"]))))
 
   (testing "edition 2024 does too, without java_multiple_files: nest_in_file_class
             defaults to NO, which is why bench/shapes.proto emits top-level classes
@@ -205,24 +217,110 @@
     (is (= "com.acme.Tiny"
            (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"
                                            :edition DescriptorProtos$Edition/EDITION_2024})
-                                     "Tiny"))))
+                                     ["Tiny"]))))
 
   (testing "no java_package falls back to the proto package"
     (is (= "acme.Tiny"
            (#'plugin/java-class-name (fdp {:package "acme" :multiple-files? true})
-                                     "Tiny"))))
+                                     ["Tiny"]))))
 
   (testing "NO hint for proto3 without java_multiple_files — the message is nested in
             the file class, whose name needs rules this deliberately does not
             implement. Emitting a guess here is what would produce wrong names."
     (is (nil? (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"})
-                                        "Tiny"))))
+                                        ["Tiny"]))))
 
   (testing "nor for edition 2023 without java_multiple_files, for the same reason"
     (is (nil? (#'plugin/java-class-name
                (fdp {:package "acme" :java-package "com.acme"
                      :edition DescriptorProtos$Edition/EDITION_2023})
-               "Tiny"))))
+               ["Tiny"]))))
 
   (testing "nor when there is no package at all to qualify the class with"
-    (is (nil? (#'plugin/java-class-name (fdp {:multiple-files? true}) "Tiny")))))
+    (is (nil? (#'plugin/java-class-name (fdp {:multiple-files? true}) ["Tiny"])))))
+
+;; ---------------------------------------------------------------------------
+;; the message tree
+
+(defn- msg
+  "A DescriptorProto: `nested` are child messages, `map-entries` are the synthetic
+  types a map<k,v> field produces (options.map_entry set)."
+  ^DescriptorProtos$DescriptorProto
+  [name & {:keys [nested map-entries]}]
+  (let [b (DescriptorProtos$DescriptorProto/newBuilder)]
+    (.setName b name)
+    (doseq [n nested] (.addNestedType b ^DescriptorProtos$DescriptorProto n))
+    (doseq [e map-entries]
+      (.addNestedType b (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                            (.setName e)
+                            (.setOptions (-> (DescriptorProtos$MessageOptions/newBuilder)
+                                             (.setMapEntry true)
+                                             (.build)))
+                            (.build))))
+    (.build b)))
+
+(defn- file-with
+  ^DescriptorProtos$FileDescriptorProto [& messages]
+  (let [b (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+              (.setName "t.proto")
+              (.setPackage "acme")
+              (.setSyntax "proto3")
+              (.setOptions (-> (DescriptorProtos$FileOptions/newBuilder)
+                               (.setJavaPackage "com.acme")
+                               (.setJavaMultipleFiles true)
+                               (.build))))]
+    (doseq [m messages] (.addMessageType b ^DescriptorProtos$DescriptorProto m))
+    (.build b)))
+
+(deftest message-tree-recurses-and-names
+  (let [tree (#'plugin/message-tree
+              (file-with (msg "Outer"
+                              :map-entries ["CountsEntry"]
+                              :nested [(msg "Inner"
+                                            :map-entries ["LabelsEntry"]
+                                            :nested [(msg "Innermost")])])
+                         (msg "Inner")))
+        by-record (into {} (map (juxt :record-name identity)) tree)]
+
+    (testing "every declared message appears, enclosing type before its children"
+      (is (= ["Outer" "Outer-Inner" "Outer-Inner-Innermost" "Inner"]
+             (mapv :record-name tree))))
+
+    (testing "map entries are skipped at EVERY level, not just the root. A walk that
+              only checks the top level emits a record for LabelsEntry — and the
+              top-level-only walk this replaced never had to check at all, so the
+              old behaviour was correct by accident"
+      (is (empty? (filter #(str/includes? (:record-name %) "Entry") tree))))
+
+    (testing "the runtime is asked for the dotted proto path, since that is the only
+              thing it can resolve a nested type from"
+      (is (= "Outer.Inner.Innermost" (:lookup-name (by-record "Outer-Inner-Innermost")))))
+
+    (testing "java nesting is $ below the first segment"
+      (is (= "com.acme.Outer$Inner$Innermost"
+             (:java-class (by-record "Outer-Inner-Innermost")))))
+
+    (testing "a nested type and a top-level type of the SAME proto name stay distinct
+              — this is what `OuterInner`-style flattening would silently merge"
+      (is (= "Outer.Inner" (:lookup-name (by-record "Outer-Inner"))))
+      (is (= "Inner"       (:lookup-name (by-record "Inner"))))
+      (is (not= (:java-class (by-record "Outer-Inner"))
+                (:java-class (by-record "Inner")))))))
+
+(deftest record-name-collision-is-refused
+  (testing "defrecord munges - to _, so nested Outer.Inner and a top-level
+            Outer_Inner both compile to class Outer_Inner and one silently clobbers
+            the other. Emitting that is worse than failing, so it fails."
+    (let [ex (is (thrown? clojure.lang.ExceptionInfo
+                          (#'plugin/message-tree
+                           (file-with (msg "Outer" :nested [(msg "Inner")])
+                                      (msg "Outer_Inner")))))]
+      (is (= "Outer_Inner" (:class (ex-data ex))))
+      (testing "and the message names both culprits, since the fix is to rename one"
+        (is (str/includes? (ex-message ex) "Outer.Inner"))
+        (is (str/includes? (ex-message ex) "Outer_Inner")))))
+
+  (testing "the check does not fire on names that merely look similar"
+    (is (some? (#'plugin/message-tree
+                (file-with (msg "Outer" :nested [(msg "Inner")])
+                           (msg "OuterInner")))))))
