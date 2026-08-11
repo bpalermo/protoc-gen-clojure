@@ -26,7 +26,7 @@
 ;; protobuf explicit presence.
 
 (defrecord Nested [id])
-(def Nested-prototype (rt/message file-descriptor "Nested"))
+(def Nested-prototype (rt/message file-descriptor "Nested" "com.acme.fixtures.e2024.Nested"))
 (def ^:private Nested--id (rt/field Nested-prototype "id"))
 (defn Nested->proto
   "Clojure -> protobuf. Takes the Nested record or any map
@@ -45,7 +45,7 @@
     )))
 
 (defrecord Delimited [note])
-(def Delimited-prototype (rt/message file-descriptor "Delimited"))
+(def Delimited-prototype (rt/message file-descriptor "Delimited" "com.acme.fixtures.e2024.Delimited"))
 (def ^:private Delimited--note (rt/field Delimited-prototype "note"))
 (defn Delimited->proto
   "Clojure -> protobuf. Takes the Delimited record or any map
@@ -64,7 +64,7 @@
     )))
 
 (defrecord Kitchen [str-field int-field bool-field bytes-field dbl-field long-field enum-field msg-field tags children counts choice-str choice-int choice-msg ts dur wrapped implicit-field delimited])
-(def Kitchen-prototype (rt/message file-descriptor "Kitchen"))
+(def Kitchen-prototype (rt/message file-descriptor "Kitchen" "com.acme.fixtures.e2024.Kitchen"))
 (def ^:private Kitchen--str-field (rt/field Kitchen-prototype "str_field"))
 (def ^:private Kitchen--int-field (rt/field Kitchen-prototype "int_field"))
 (def ^:private Kitchen--bool-field (rt/field Kitchen-prototype "bool_field"))
@@ -137,7 +137,7 @@
     )))
 
 (defrecord NestedInFileClass [id])
-(def NestedInFileClass-prototype (rt/message file-descriptor "NestedInFileClass"))
+(def NestedInFileClass-prototype (rt/message file-descriptor "NestedInFileClass" "com.acme.fixtures.e2024.NestedInFileClass"))
 (def ^:private NestedInFileClass--id (rt/field NestedInFileClass-prototype "id"))
 (defn NestedInFileClass->proto
   "Clojure -> protobuf. Takes the NestedInFileClass record or any map

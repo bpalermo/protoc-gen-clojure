@@ -25,7 +25,7 @@
 ;; protobuf explicit presence.
 
 (defrecord HelloRequest [name repeat-count greeting])
-(def HelloRequest-prototype (rt/message file-descriptor "HelloRequest"))
+(def HelloRequest-prototype (rt/message file-descriptor "HelloRequest" "com.acme.greeter.HelloRequest"))
 (def ^:private HelloRequest--name (rt/field HelloRequest-prototype "name"))
 (def ^:private HelloRequest--repeat-count (rt/field HelloRequest-prototype "repeat_count"))
 (def ^:private HelloRequest--greeting (rt/field HelloRequest-prototype "greeting"))
@@ -50,7 +50,7 @@
     )))
 
 (defrecord HelloReply [message])
-(def HelloReply-prototype (rt/message file-descriptor "HelloReply"))
+(def HelloReply-prototype (rt/message file-descriptor "HelloReply" "com.acme.greeter.HelloReply"))
 (def ^:private HelloReply--message (rt/field HelloReply-prototype "message"))
 (defn HelloReply->proto
   "Clojure -> protobuf. Takes the HelloReply record or any map

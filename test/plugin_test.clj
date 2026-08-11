@@ -13,6 +13,7 @@
             [protoc-gen-clojure.plugin :as plugin])
   (:import [com.google.protobuf DescriptorProtos$Edition
             DescriptorProtos$DescriptorProto DescriptorProtos$FileDescriptorProto
+            DescriptorProtos$FileOptions
             DescriptorProtos$MessageOptions DescriptorProtos$ServiceDescriptorProto]
            [com.google.protobuf.compiler PluginProtos$CodeGeneratorRequest
             PluginProtos$CodeGeneratorResponse$Feature]))
@@ -172,3 +173,56 @@
            (plugin/proto->ns "fixtures/e2024legacy/legacy_style.proto" nil)))
     (is (= "fixtures/e2024legacy/legacy_style.clj"
            (plugin/ns->path "fixtures.e2024legacy.legacy-style")))))
+
+;; ---------------------------------------------------------------------------
+;; java class names for the prototype hint
+
+(defn- fdp
+  "A FileDescriptorProto with just enough set to exercise the naming rules."
+  ^DescriptorProtos$FileDescriptorProto
+  [{:keys [package java-package multiple-files? edition]}]
+  (let [opts (cond-> (DescriptorProtos$FileOptions/newBuilder)
+               java-package    (.setJavaPackage java-package)
+               multiple-files? (.setJavaMultipleFiles true)
+               :always         (.build))
+        b    (cond-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+               package (.setPackage package)
+               :always (.setOptions opts))]
+    (if edition
+      (-> b (.setSyntax "editions") (.setEdition edition) (.build))
+      (-> b (.setSyntax "proto3") (.build)))))
+
+(deftest java-class-name-only-when-provable
+  (testing "java_multiple_files puts every message at the top level"
+    (is (= "com.acme.Tiny"
+           (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"
+                                           :multiple-files? true})
+                                     "Tiny"))))
+
+  (testing "edition 2024 does too, without java_multiple_files: nest_in_file_class
+            defaults to NO, which is why bench/shapes.proto emits top-level classes
+            beside a ShapesProto file class"
+    (is (= "com.acme.Tiny"
+           (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"
+                                           :edition DescriptorProtos$Edition/EDITION_2024})
+                                     "Tiny"))))
+
+  (testing "no java_package falls back to the proto package"
+    (is (= "acme.Tiny"
+           (#'plugin/java-class-name (fdp {:package "acme" :multiple-files? true})
+                                     "Tiny"))))
+
+  (testing "NO hint for proto3 without java_multiple_files — the message is nested in
+            the file class, whose name needs rules this deliberately does not
+            implement. Emitting a guess here is what would produce wrong names."
+    (is (nil? (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"})
+                                        "Tiny"))))
+
+  (testing "nor for edition 2023 without java_multiple_files, for the same reason"
+    (is (nil? (#'plugin/java-class-name
+               (fdp {:package "acme" :java-package "com.acme"
+                     :edition DescriptorProtos$Edition/EDITION_2023})
+               "Tiny"))))
+
+  (testing "nor when there is no package at all to qualify the class with"
+    (is (nil? (#'plugin/java-class-name (fdp {:multiple-files? true}) "Tiny")))))
