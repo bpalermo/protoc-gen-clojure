@@ -276,9 +276,18 @@
 
 (defn- message-tree
   "Every message declared in `fdp`, each enclosing type before the types nested in
-  it, as the maps the emitter renders. Map-entry types are skipped, at every level."
+  it, as the maps the emitter renders. Map-entry types are skipped, at every level
+  including the root.
+
+  The root filter is for descriptors this plugin did not get from protoc. protoc
+  synthesises map-entry types only as nested types and rejects the option written by
+  hand — `option map_entry = true` fails with \"should not be set explicitly\" — but
+  --descriptor_set_in accepts a set from anywhere, and a filter that holds only
+  below the root would make this docstring a lie for one input class."
   [^DescriptorProtos$FileDescriptorProto fdp]
-  (letfn [(walk [^DescriptorProtos$DescriptorProto md path]
+  (letfn [(map-entry? [^DescriptorProtos$DescriptorProto md]
+            (.getMapEntry (.getOptions md)))
+          (walk [^DescriptorProtos$DescriptorProto md path]
             (let [path (conj path (.getName md))]
               (cons {:record-name (record-name path)
                      :lookup-name (str/join "." path)
@@ -288,10 +297,9 @@
                                            :key        (field-key-symbol (.getName f))})
                                         (.getFieldList md))}
                     (mapcat #(walk % path)
-                            (remove (fn [^DescriptorProtos$DescriptorProto n]
-                                      (.getMapEntry (.getOptions n)))
-                                    (.getNestedTypeList md))))))]
-    (let [msgs (vec (mapcat #(walk % []) (.getMessageTypeList fdp)))]
+                            (remove map-entry? (.getNestedTypeList md))))))]
+    (let [msgs (vec (mapcat #(walk % [])
+                            (remove map-entry? (.getMessageTypeList fdp))))]
       (check-record-names! fdp msgs)
       msgs)))
 
@@ -436,10 +444,13 @@
                    ;; lookup, and the runtime walks it segment by segment because
                    ;; nothing on FileDescriptor resolves a nested type directly.
                    (pr-str lookup)
-                   ;; The third argument needs clj-protobuf 0.1.3 or later, and a
-                   ;; dotted lookup above needs 0.1.5. Omitted entirely when
-                   ;; unknown, so files that get no hint still work against older
-                   ;; runtimes.
+                   ;; Two independent runtime floors, and neither applies to every
+                   ;; file. A dotted lookup above needs clj-protobuf 0.1.5, so only
+                   ;; a file declaring nested messages does — top-level output is
+                   ;; spelled exactly as it always was. This third argument needs
+                   ;; 0.1.3, and is omitted entirely when the class name is
+                   ;; unknown, so a file that gets no hint works against older
+                   ;; runtimes still.
                    (when java-class (str " " (pr-str java-class)))
                    "))"))
         (doseq [{:keys [key proto-name]} fields]

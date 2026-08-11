@@ -118,7 +118,8 @@
                       (-> (DescriptorProtos$DescriptorProto/newBuilder)
                           (.setName "CountsEntry")
                           (.setOptions (-> (DescriptorProtos$MessageOptions/newBuilder)
-                                           (.setMapEntry true)))))))
+                                           (.setMapEntry true)
+                                           (.build)))))))
                 (.build))
         out (plugin/emit-namespace fdp (constantly false) nil false)]
     (is (str/includes? out "(defrecord Outer-Inner [")
@@ -259,6 +260,16 @@
                             (.build))))
     (.build b)))
 
+(defn- map-entry-msg
+  "A message with options.map_entry set, as protoc synthesises for map<k,v>."
+  ^DescriptorProtos$DescriptorProto [name]
+  (-> (DescriptorProtos$DescriptorProto/newBuilder)
+      (.setName name)
+      (.setOptions (-> (DescriptorProtos$MessageOptions/newBuilder)
+                       (.setMapEntry true)
+                       (.build)))
+      (.build)))
+
 (defn- file-with
   ^DescriptorProtos$FileDescriptorProto [& messages]
   (let [b (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
@@ -324,3 +335,15 @@
     (is (some? (#'plugin/message-tree
                 (file-with (msg "Outer" :nested [(msg "Inner")])
                            (msg "OuterInner")))))))
+
+(deftest map-entry-is-skipped-at-the-root-too
+  (testing "protoc only ever synthesises map-entry types as NESTED types, and rejects
+            `option map_entry = true` written by hand. But --descriptor_set_in takes a
+            set from anywhere, so the root is filtered as well — a filter that held
+            only below the root would emit a record for a synthetic type on the one
+            input class that can carry one."
+    (is (= ["Real"]
+           (mapv :record-name
+                 (#'plugin/message-tree
+                  (file-with (map-entry-msg "TopLevelEntry")
+                             (msg "Real"))))))))
