@@ -24,7 +24,7 @@
 ;; protobuf explicit presence.
 
 (defrecord Flat [f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12])
-(def Flat-prototype (rt/message file-descriptor "Flat"))
+(def Flat-prototype (rt/message file-descriptor "Flat" "com.acme.fixtures.bench.Flat"))
 (def ^:private Flat--f1 (rt/field Flat-prototype "f1"))
 (def ^:private Flat--f2 (rt/field Flat-prototype "f2"))
 (def ^:private Flat--f3 (rt/field Flat-prototype "f3"))
@@ -76,7 +76,7 @@
     )))
 
 (defrecord Tiny [id n ok])
-(def Tiny-prototype (rt/message file-descriptor "Tiny"))
+(def Tiny-prototype (rt/message file-descriptor "Tiny" "com.acme.fixtures.bench.Tiny"))
 (def ^:private Tiny--id (rt/field Tiny-prototype "id"))
 (def ^:private Tiny--n (rt/field Tiny-prototype "n"))
 (def ^:private Tiny--ok (rt/field Tiny-prototype "ok"))
@@ -101,7 +101,7 @@
     )))
 
 (defrecord Deep [id child])
-(def Deep-prototype (rt/message file-descriptor "Deep"))
+(def Deep-prototype (rt/message file-descriptor "Deep" "com.acme.fixtures.bench.Deep"))
 (def ^:private Deep--id (rt/field Deep-prototype "id"))
 (def ^:private Deep--child (rt/field Deep-prototype "child"))
 (defn Deep->proto
@@ -123,7 +123,7 @@
     )))
 
 (defrecord Level2 [id child])
-(def Level2-prototype (rt/message file-descriptor "Level2"))
+(def Level2-prototype (rt/message file-descriptor "Level2" "com.acme.fixtures.bench.Level2"))
 (def ^:private Level2--id (rt/field Level2-prototype "id"))
 (def ^:private Level2--child (rt/field Level2-prototype "child"))
 (defn Level2->proto
@@ -145,7 +145,7 @@
     )))
 
 (defrecord Level3 [id child])
-(def Level3-prototype (rt/message file-descriptor "Level3"))
+(def Level3-prototype (rt/message file-descriptor "Level3" "com.acme.fixtures.bench.Level3"))
 (def ^:private Level3--id (rt/field Level3-prototype "id"))
 (def ^:private Level3--child (rt/field Level3-prototype "child"))
 (defn Level3->proto
@@ -167,7 +167,7 @@
     )))
 
 (defrecord Level4 [id leaf])
-(def Level4-prototype (rt/message file-descriptor "Level4"))
+(def Level4-prototype (rt/message file-descriptor "Level4" "com.acme.fixtures.bench.Level4"))
 (def ^:private Level4--id (rt/field Level4-prototype "id"))
 (def ^:private Level4--leaf (rt/field Level4-prototype "leaf"))
 (defn Level4->proto
@@ -189,7 +189,7 @@
     )))
 
 (defrecord WideRepeated [id items])
-(def WideRepeated-prototype (rt/message file-descriptor "WideRepeated"))
+(def WideRepeated-prototype (rt/message file-descriptor "WideRepeated" "com.acme.fixtures.bench.WideRepeated"))
 (def ^:private WideRepeated--id (rt/field WideRepeated-prototype "id"))
 (def ^:private WideRepeated--items (rt/field WideRepeated-prototype "items"))
 (defn WideRepeated->proto
@@ -211,7 +211,7 @@
     )))
 
 (defrecord RepeatedMessages [id rows])
-(def RepeatedMessages-prototype (rt/message file-descriptor "RepeatedMessages"))
+(def RepeatedMessages-prototype (rt/message file-descriptor "RepeatedMessages" "com.acme.fixtures.bench.RepeatedMessages"))
 (def ^:private RepeatedMessages--id (rt/field RepeatedMessages-prototype "id"))
 (def ^:private RepeatedMessages--rows (rt/field RepeatedMessages-prototype "rows"))
 (defn RepeatedMessages->proto
@@ -233,7 +233,7 @@
     )))
 
 (defrecord MapHeavy [id counts])
-(def MapHeavy-prototype (rt/message file-descriptor "MapHeavy"))
+(def MapHeavy-prototype (rt/message file-descriptor "MapHeavy" "com.acme.fixtures.bench.MapHeavy"))
 (def ^:private MapHeavy--id (rt/field MapHeavy-prototype "id"))
 (def ^:private MapHeavy--counts (rt/field MapHeavy-prototype "counts"))
 (defn MapHeavy->proto

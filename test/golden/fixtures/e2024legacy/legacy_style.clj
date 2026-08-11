@@ -24,7 +24,7 @@
 ;; protobuf explicit presence.
 
 (defrecord legacyStyleMessage [camel-case-field upper-snake-field already-snake x http2-server])
-(def legacyStyleMessage-prototype (rt/message file-descriptor "legacyStyleMessage"))
+(def legacyStyleMessage-prototype (rt/message file-descriptor "legacyStyleMessage" "com.acme.fixtures.e2024legacy.legacyStyleMessage"))
 (def ^:private legacyStyleMessage--camel-case-field (rt/field legacyStyleMessage-prototype "camelCaseField"))
 (def ^:private legacyStyleMessage--upper-snake-field (rt/field legacyStyleMessage-prototype "UPPER_SNAKE_FIELD"))
 (def ^:private legacyStyleMessage--already-snake (rt/field legacyStyleMessage-prototype "already_snake"))

@@ -156,6 +156,69 @@
                                (str/lower-case (str v))))))
 
 ;; ---------------------------------------------------------------------------
+;; java class names
+;;
+;; Encoding runs through the prototype's builder. A DynamicMessage builder stores
+;; fields in a FieldSet map and boxes values; the generated Java builder has typed
+;; fields. Measured in clj-protobuf's benchmark, handing rt/message the Java default
+;; instance instead is ~45% faster to encode and ~46% lighter on allocation for small
+;; messages, and beats protobuf's own generated-code arm on some shapes. Nothing else
+;; changes — same codec, same field descriptors, same bytes.
+;;
+;; So this computes the Java class name and passes it along. rt/message resolves it
+;; if the class is present AND describes the same message, and silently uses the
+;; DynamicMessage otherwise, which is what makes a conservative implementation the
+;; right one: a name we decline to compute costs speed, and a name we get wrong costs
+;; speed too. Neither breaks anything.
+;;
+;; The test is FILE-LEVEL, and that is a heuristic, not a proof. protobuf's Java naming
+;; has more to it than this — java_outer_classname, the OuterClass collision suffix,
+;; $-nesting inside the file class — so a hint is emitted only where the file's own
+;; options put its messages at the top level:
+;;
+;;   java_multiple_files = true          -> <pkg>.<Message>, always top level
+;;   edition 2024 or later               -> <pkg>.<Message>; nest_in_file_class
+;;                                          defaults to NO, so messages are top level
+;;                                          even without java_multiple_files
+;;   anything else (proto2, proto3 or     -> no hint. The message is nested in the file
+;;   edition 2023 without multiple_files)   class, whose name needs rules this does not
+;;                                          implement.
+;;
+;; A per-message feature can invalidate the file-level answer, and one in the corpus
+;; does: e2024/kitchen.proto's NestedInFileClass sets
+;; `features.(pb.java).nest_in_file_class = YES`, which moves it back inside the file
+;; class as KitchenProto$NestedInFileClass. This emits the top-level name for it anyway
+;; — the WRONG name — and the runtime rejects it on the descriptor full-name check and
+;; keeps its DynamicMessage. Reading the resolved FeatureSet to skip the hint would need
+;; feature resolution (defaults, then file, then message), which is more machinery than
+;; the fallback is worth; the cost of being wrong here is the optimisation, not bytes.
+;;
+;; Verified against the corpus, whose generated Java is produced by protobuf's own
+;; plugin: 22 of 23 names match, the miss being exactly the NestedInFileClass case
+;; above. bench (edition 2024, no multiple_files) emits top-level Tiny/Flat/... beside a
+;; ShapesProto file class, and e2023/p2/p3 (multiple_files) do the same.
+(def ^:private edition-2024-number
+  (.getNumber DescriptorProtos$Edition/EDITION_2024))
+
+(defn- top-level-java-class?
+  [^DescriptorProtos$FileDescriptorProto fdp]
+  (let [opts (.getOptions fdp)]
+    (or (.getJavaMultipleFiles opts)
+        (and (= "editions" (.getSyntax fdp))
+             (>= (.getNumber (.getEdition fdp)) edition-2024-number)))))
+
+(defn- java-class-name
+  "Fully-qualified Java class for a message the file's options place at the top
+  level, or nil when that cannot be derived. nil means the generated code keeps
+  today's DynamicMessage prototype. A non-nil answer is a hint the runtime
+  verifies, not a guarantee — see the note above on per-message features."
+  [^DescriptorProtos$FileDescriptorProto fdp msg-name]
+  (let [opts (.getOptions fdp)
+        pkg  (if (.hasJavaPackage opts) (.getJavaPackage opts) (.getPackage fdp))]
+    (when (and (seq pkg) (top-level-java-class? fdp))
+      (str pkg "." msg-name))))
+
+;; ---------------------------------------------------------------------------
 ;; emission
 
 (def default-runtime-namespaces
@@ -247,6 +310,7 @@
         b64     (.encodeToString (Base64/getEncoder) (.toByteArray embed))
         msgs    (mapv (fn [^DescriptorProtos$DescriptorProto md]
                         {:name   (.getName md)
+                         :java-class (java-class-name fdp (.getName md))
                          :fields (mapv (fn [^DescriptorProtos$FieldDescriptorProto f]
                                          {:proto-name (.getName f)
                                           :key        (field-key-symbol (.getName f))})
@@ -304,11 +368,16 @@
       (line ";; vars, and straight-line ->proto/proto-> built on them. nil means")
       (line ";; absent, which is how a record (all keys always present) maps onto")
       (line ";; protobuf explicit presence.")
-      (doseq [{msg-name :name fields :fields} msgs]
+      (doseq [{msg-name :name fields :fields java-class :java-class} msgs]
         (line "")
         (line (str "(defrecord " msg-name " [" (str/join " " (map :key fields)) "])"))
         (line (str "(def " msg-name "-prototype (rt/message file-descriptor "
-                   (pr-str msg-name) "))"))
+                   (pr-str msg-name)
+                   ;; The third argument needs clj-protobuf 0.1.3 or later. Omitted
+                   ;; entirely when unknown, so files that get no hint still work
+                   ;; against older runtimes.
+                   (when java-class (str " " (pr-str java-class)))
+                   "))"))
         (doseq [{:keys [key proto-name]} fields]
           (line (str "(def ^:private " msg-name "--" key
                      " (rt/field " msg-name "-prototype " (pr-str proto-name) "))")))

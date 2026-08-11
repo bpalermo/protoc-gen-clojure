@@ -26,7 +26,7 @@
 ;; protobuf explicit presence.
 
 (defrecord Nested [id])
-(def Nested-prototype (rt/message file-descriptor "Nested"))
+(def Nested-prototype (rt/message file-descriptor "Nested" "com.acme.fixtures.p3.Nested"))
 (def ^:private Nested--id (rt/field Nested-prototype "id"))
 (defn Nested->proto
   "Clojure -> protobuf. Takes the Nested record or any map
@@ -45,7 +45,7 @@
     )))
 
 (defrecord Kitchen [str-field int-field bool-field bytes-field dbl-field long-field enum-field msg-field tags children counts choice-str choice-int choice-msg ts dur wrapped opt-str opt-int])
-(def Kitchen-prototype (rt/message file-descriptor "Kitchen"))
+(def Kitchen-prototype (rt/message file-descriptor "Kitchen" "com.acme.fixtures.p3.Kitchen"))
 (def ^:private Kitchen--str-field (rt/field Kitchen-prototype "str_field"))
 (def ^:private Kitchen--int-field (rt/field Kitchen-prototype "int_field"))
 (def ^:private Kitchen--bool-field (rt/field Kitchen-prototype "bool_field"))
