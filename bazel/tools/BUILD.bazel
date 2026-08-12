@@ -4,7 +4,7 @@ load("//bazel/lint:linters.bzl", "shellcheck_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# Rewrites bazel/versions.bzl with the sha256 of the released binaries.
+# Rewrites clojure/versions.bzl with the sha256 of the released binaries.
 #
 # Still shell, and still outside the build graph, because its inputs are not Bazel
 # artifacts: the binaries are produced by the release matrix and arrive as CI

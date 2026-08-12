@@ -1,6 +1,6 @@
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
-load("//bazel:defs.bzl", "clojure_proto_library")
 load("//bazel/lint:linters.bzl", "buf_test")
+load("//clojure:defs.bzl", "clojure_proto_library")
 
 package(default_visibility = ["//visibility:public"])
 

@@ -1,24 +1,8 @@
+# Development-only Bazel tooling. Nothing here ships in the module archive.
+#
+# The package exists so //bazel:native_image.bzl is a loadable label; the public
+# ruleset lives in //clojure, per https://bazel.build/rules/deploying.
+
 package(default_visibility = ["//visibility:public"])
 
-exports_files([
-    "defs.bzl",
-    "extensions.bzl",
-    "toolchain.bzl",
-    "versions.bzl",
-])
-
-# Resolved by clojure_proto_library. Declared mandatory = False there, so a
-# target passing an explicit `plugin` works with no toolchain registered — which
-# is how this repo tests the binary it just built.
-toolchain_type(name = "toolchain_type")
-
-filegroup(
-    name = "srcs",
-    srcs = [
-        "BUILD.bazel",
-        "defs.bzl",
-        "extensions.bzl",
-        "toolchain.bzl",
-        "versions.bzl",
-    ],
-)
+exports_files(["native_image.bzl"])

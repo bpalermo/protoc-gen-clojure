@@ -13,10 +13,10 @@ generate a `.clj` file.
 | Path | What lives there |
 | --- | --- |
 | `src/protoc_gen_clojure/plugin.clj` | The whole plugin: request parsing, naming, emitter, `-main`. |
-| `bazel/defs.bzl` | `clojure_proto_library` (the public rule) and `proto_transitive_descriptor_sets`. |
-| `bazel/toolchain.bzl` | `protoc_gen_clojure_toolchain` — carries the plugin executable. |
-| `bazel/extensions.bzl` | Module extension that downloads the prebuilt release binaries. |
-| `bazel/versions.bzl` | Release checksums. **Empty in git on purpose** (see below). |
+| `clojure/defs.bzl` | `clojure_proto_library` (the public rule) and `proto_transitive_descriptor_sets`. |
+| `clojure/toolchain.bzl` | `protoc_gen_clojure_toolchain` — carries the plugin executable. |
+| `clojure/extensions.bzl` | Module extension that downloads the prebuilt release binaries. |
+| `clojure/versions.bzl` | Release checksums. **Empty in git on purpose** (see below). |
 | `bazel/native_image.bzl` | Our own native-image rule; see below for why not rules_graalvm's. |
 | `bazel/lint/linters.bzl` | buf and shellcheck aspects, wired as `lint_test` targets. |
 | `bazel/tools/pin_versions.sh` | `bazel run //bazel/tools:pin_versions` — writes release checksums. |
@@ -24,6 +24,16 @@ generate a `.clj` file.
 | `test/proto/` | Fixture protos (proto2, proto3, editions 2023/2024) + generation target. |
 | `test/golden/` | Checked-in expected output. Generated, not hand-written. |
 | `MODULE.bazel` | Dependency split is load-bearing — see below. |
+| `docs/` | Generated Stardoc API reference. Do not hand-edit; see below. |
+
+**`//clojure` is the public API, `//bazel` is development-only.** The split follows
+[bazel.build/rules/deploying](https://bazel.build/rules/deploying), which asks for a
+directory named after the language with `defs.bzl` as its entry point. It is also
+enforced by what ships: `//bazel/dev:module_archive` packages `//clojure:srcs` and
+nothing from `//bazel`, so a consumer can only load from `//clojure`. Anything added
+under `//clojure` must therefore be load-free of dev dependencies, exactly like the
+root `BUILD.bazel`. New public rule? `//clojure`. New lint, format, native-image or
+release helper? `//bazel`.
 
 ## Common commands
 
@@ -84,7 +94,7 @@ against `test/golden/`. If you intend an emitter change, run
 `bazel run //test:update_golden` and review the resulting diff — that diff *is*
 the change. Don't hand-edit files under `test/golden/`.
 
-**`bazel/versions.bzl` is deliberately empty in git.** The native binaries are
+**`clojure/versions.bzl` is deliberately empty in git.** The native binaries are
 built by the same release that publishes the module, so their checksums can't
 exist at tag time. The release workflow builds them, rewrites this file, and
 publishes its own source archive; `.bcr/source.template.json` points at that

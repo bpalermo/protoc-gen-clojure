@@ -7,7 +7,7 @@ module(
     version = "0.0.0",
 )
 
-bazel_dep(name = "protoc_gen_clojure", version = "0.1.0")
+bazel_dep(name = "protoc_gen_clojure", version = "0.2.0")
 bazel_dep(name = "protobuf", version = "35.1")
 bazel_dep(name = "rules_shell", version = "0.8.0")
 
@@ -26,7 +26,7 @@ local_path_override(
     path = "../..",
 )
 
-plugin = use_extension("@protoc_gen_clojure//bazel:extensions.bzl", "toolchains")
+plugin = use_extension("@protoc_gen_clojure//clojure:extensions.bzl", "toolchains")
 use_repo(plugin, "protoc_gen_clojure_toolchains")
 
 register_toolchains("@protoc_gen_clojure_toolchains//:all")

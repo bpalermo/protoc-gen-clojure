@@ -1,0 +1,86 @@
+"""Generated API reference for the public ruleset in //clojure.
+
+bazel.build/rules/deploying asks for rules documented via Stardoc and for the
+rendered Markdown to live in the repo so it stays current as the Starlark changes.
+Both halves are here:
+
+  bazel run  //docs:update_docs   regenerate the .md files in place
+  bazel test //docs:all           fail if they are out of date
+
+That is the same write_source_files pattern //test uses for golden .clj output, so
+there is one mechanism for "generated file checked into git", not two.
+
+Development-only: this package loads @stardoc and @bazel_skylib's bzl_library, and
+it is deliberately where the bzl_library targets live rather than //clojure. The
+public package ships in the module archive and stays load-free, so nothing a
+consumer resolves depends on a docs-only rule.
+"""
+
+load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@stardoc//stardoc:stardoc.bzl", "stardoc")
+
+package(default_visibility = ["//visibility:private"])
+
+# Stardoc has to resolve every transitive load, so each public .bzl gets a
+# bzl_library mirroring its own load statements.
+bzl_library(
+    name = "versions_bzl",
+    srcs = ["//clojure:versions.bzl"],
+)
+
+bzl_library(
+    name = "defs_bzl",
+    srcs = ["//clojure:defs.bzl"],
+    deps = ["@protobuf//bazel/common:proto_info_bzl"],
+)
+
+bzl_library(
+    name = "toolchain_bzl",
+    srcs = ["//clojure:toolchain.bzl"],
+)
+
+bzl_library(
+    name = "extensions_bzl",
+    srcs = ["//clojure:extensions.bzl"],
+    deps = [
+        ":toolchain_bzl",
+        ":versions_bzl",
+    ],
+)
+
+# One stardoc target per public entry point rather than a single merged page, so
+# each file's module docstring survives as its preamble — that is where the
+# rationale lives (why a rule and not a genrule; why a toolchain and not a label).
+stardoc(
+    name = "defs_doc",
+    out = "defs.md.generated",
+    input = "//clojure:defs.bzl",
+    deps = [":defs_bzl"],
+)
+
+stardoc(
+    name = "toolchain_doc",
+    out = "toolchain.md.generated",
+    input = "//clojure:toolchain.bzl",
+    deps = [":toolchain_bzl"],
+)
+
+stardoc(
+    name = "extensions_doc",
+    out = "extensions.md.generated",
+    input = "//clojure:extensions.bzl",
+    deps = [":extensions_bzl"],
+)
+
+# The checked-in copies. `bazel run //docs:update_docs` writes them; the
+# :update_docs_<n>_test targets the macro generates fail when they drift, which
+# keeps the docs honest in CI with no separate job.
+write_source_files(
+    name = "update_docs",
+    files = {
+        "defs.md": ":defs.md.generated",
+        "extensions.md": ":extensions.md.generated",
+        "toolchain.md": ":toolchain.md.generated",
+    },
+)

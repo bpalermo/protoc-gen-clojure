@@ -1,0 +1,36 @@
+# The public Bazel API: `clojure_proto_library`, the toolchain, and the module
+# extension that fetches the prebuilt plugin.
+#
+# Named after the language per https://bazel.build/rules/deploying, which asks for
+# a directory named after the language with `defs.bzl` as its entry point. So a
+# consumer loads `@protoc_gen_clojure//clojure:defs.bzl`. Development-only tooling
+# (native-image, lint, format, release packaging) stays under //bazel.
+#
+# Deliberately load-free, for the same reason the root BUILD file is: everything in
+# this package ships in the module archive, so a `load` of any dev_dependency would
+# break consumers at BUILD-loading time.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "defs.bzl",
+    "extensions.bzl",
+    "toolchain.bzl",
+    "versions.bzl",
+])
+
+# Resolved by clojure_proto_library. Declared mandatory = False there, so a
+# target passing an explicit `plugin` works with no toolchain registered — which
+# is how this repo tests the binary it just built.
+toolchain_type(name = "toolchain_type")
+
+filegroup(
+    name = "srcs",
+    srcs = [
+        "BUILD.bazel",
+        "defs.bzl",
+        "extensions.bzl",
+        "toolchain.bzl",
+        "versions.bzl",
+    ],
+)

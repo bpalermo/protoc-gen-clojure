@@ -28,7 +28,7 @@ tasks:
     platform: ${{ platform }}
     bazel: ${{ bazel }}
     build_targets:
-      - "@protoc_gen_clojure//bazel:toolchain_type"
+      - "@protoc_gen_clojure//clojure:toolchain_type"
 
 # The real test: a module that depends on this one, registers the toolchain, and
 # generates Clojure from a .proto with no Clojure, JVM or GraalVM of its own. That

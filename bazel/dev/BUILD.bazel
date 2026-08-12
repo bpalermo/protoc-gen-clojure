@@ -42,7 +42,7 @@ format_test(
 # ---------------------------------------------------------------------------
 # The module source archive BCR serves.
 #
-# Not GitHub's auto-generated tarball, because bazel/versions.bzl has to carry the
+# Not GitHub's auto-generated tarball, because clojure/versions.bzl has to carry the
 # sha256 of the native binaries released alongside it, and those cannot exist when
 # the tag is cut. The release workflow pins them with //bazel/tools:pin_versions, then
 # builds this.
@@ -63,7 +63,7 @@ filegroup(
         "//:LICENSE",
         "//:MODULE.bazel",
         "//:README.md",
-        "//bazel:srcs",
+        "//clojure:srcs",
         "//examples/bzlmod:srcs",
     ],
 )
