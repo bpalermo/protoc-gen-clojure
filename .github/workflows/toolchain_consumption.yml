@@ -1,0 +1,64 @@
+name: toolchain consumption
+
+# Proves the README's headline claim against a PUBLISHED release: a consumer with no
+# Clojure, no JVM and no GraalVM can generate Clojure through the toolchain's prebuilt
+# binary. See test/toolchain_consumption_check.sh for why nothing in `bazel test //...`
+# can cover this.
+#
+# It is a separate workflow rather than a job in ci.yml because it does not test the
+# commit it runs on — it tests the newest release. Running it per pull request would
+# report on an artifact the pull request cannot change, and would fail every PR opened
+# before the first release of a new module.
+on:
+  # The moment a release exists is the moment this can be answered for it.
+  release:
+    types: [published]
+  # Release assets are immutable, but everything around them is not: runner images
+  # move, Bazel moves, and the glibc floor of a shipped binary is exactly the kind of
+  # thing that stops being satisfiable without anyone touching this repo.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to check (default: newest stable release)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  consume:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every platform the release ships a binary for, on a runner label the release
+        # workflow already uses — an unavailable label queues indefinitely instead of
+        # failing, which is how macos-13 was lost once before.
+        runner:
+          - ubuntu-latest # linux_x86_64
+          - ubuntu-24.04-arm # linux_aarch64
+          - macos-15-intel # darwin_x86_64
+          - macos-latest # darwin_arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      # No JDK and no GraalVM set up on purpose. If this job ever needs one, the claim
+      # it exists to verify has stopped being true.
+      - name: consume the released module
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: test/toolchain_consumption_check.sh ${{ inputs.tag }}
