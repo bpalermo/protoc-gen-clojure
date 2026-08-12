@@ -519,7 +519,7 @@
   "The released version. Single source of truth: the release workflow asserts
   this equals the tag rather than rewriting it, so a forgotten bump fails the
   release instead of shipping a binary that misreports itself."
-  "0.1.0")
+  "0.2.0")
 
 (defn -main
   "Read a CodeGeneratorRequest on stdin, write a CodeGeneratorResponse on stdout.

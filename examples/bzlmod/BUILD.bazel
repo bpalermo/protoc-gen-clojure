@@ -1,5 +1,5 @@
 load("@protobuf//bazel:proto_library.bzl", "proto_library")
-load("@protoc_gen_clojure//bazel:defs.bzl", "clojure_proto_library")
+load("@protoc_gen_clojure//clojure:defs.bzl", "clojure_proto_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 proto_library(

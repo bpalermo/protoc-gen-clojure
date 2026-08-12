@@ -4,7 +4,7 @@
 # consume. Everything needed to RUN the plugin from Bazel is a normal dep;
 # everything needed to BUILD it from Clojure source is a dev_dependency.
 #
-# A consumer uses the prebuilt native binary (see bazel/extensions.bzl), so it
+# A consumer uses the prebuilt native binary (see clojure/extensions.bzl), so it
 # never needs rules_clojure, a JVM toolchain, or GraalVM to generate one .clj
 # file. That also sidesteps a hard BCR constraint: a published module's non-dev
 # deps must all resolve from BCR, and rules_clojure currently needs a Bazel 9
@@ -12,10 +12,16 @@
 # dev_dependency it is ignored entirely when this module is consumed, and the
 # git_override below only applies when this module is the root — exactly the
 # semantics we want.
+#
+# 0.2.0, not 0.1.1: the public load paths moved from //bazel to //clojure, so
+# every consumer's `load` and `use_extension` lines change.
+#
+# No compatibility_level: Bazel 9.2 reports it as a no-op slated for removal
+# ("The attribute 'compatibility_level' in module() is a no-op"), and this module
+# is Bazel 9 only, so declaring it buys nothing but a warning.
 module(
     name = "protoc_gen_clojure",
-    version = "0.1.0",
-    compatibility_level = 1,
+    version = "0.2.0",
 )
 
 bazel_dep(name = "platforms", version = "1.1.0")
@@ -28,6 +34,11 @@ bazel_dep(name = "protobuf", version = "35.1")
 
 # --- build-only, from here down --------------------------------------------
 
+# Stardoc, for the generated API reference in //docs. bazel.build/rules/deploying
+# asks for exactly this: rules documented with docstrings, rendered automatically,
+# and the Markdown kept in the repo so it cannot drift. The drift guard is
+# //docs:update_docs_*_test, wired the same way as the golden files in //test.
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
 bazel_dep(name = "rules_java", version = "9.7.1", dev_dependency = True)
 bazel_dep(name = "rules_jvm_external", version = "7.1", dev_dependency = True)
 bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)

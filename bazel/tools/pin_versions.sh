@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rewrite bazel/versions.bzl with the sha256 of the released native binaries.
+# Rewrite clojure/versions.bzl with the sha256 of the released native binaries.
 #
 # This stays shell because its inputs are not Bazel artifacts: the binaries are
 # built by GraalVM in the release matrix and arrive as CI artifacts, so no build
@@ -46,6 +46,6 @@ platforms=(linux_x86_64 linux_aarch64 darwin_x86_64 darwin_arm64)
   echo '    "darwin_x86_64": ["@platforms//os:macos", "@platforms//cpu:x86_64"],'
   echo '    "darwin_arm64": ["@platforms//os:macos", "@platforms//cpu:arm64"],'
   echo "}"
-} >bazel/versions.bzl
+} >clojure/versions.bzl
 
-echo "pinned ${#platforms[@]} binaries for v$VERSION in bazel/versions.bzl"
+echo "pinned ${#platforms[@]} binaries for v$VERSION in clojure/versions.bzl"

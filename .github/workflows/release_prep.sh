@@ -50,7 +50,7 @@ for b in "${BINARIES[@]}"; do
 done
 chmod +x "$STAGE"/*
 
-# Pin the binaries' checksums into bazel/versions.bzl, then build the module
+# Pin the binaries' checksums into clojure/versions.bzl, then build the module
 # archive so it carries them. This ordering is the whole reason the archive is
 # not GitHub's auto-generated tarball: the hashes cannot exist before the
 # binaries do.
@@ -87,7 +87,7 @@ Binaries are unsigned.
 \`\`\`starlark
 bazel_dep(name = "protoc_gen_clojure", version = "${VERSION}")
 
-plugin = use_extension("@protoc_gen_clojure//bazel:extensions.bzl", "toolchains")
+plugin = use_extension("@protoc_gen_clojure//clojure:extensions.bzl", "toolchains")
 use_repo(plugin, "protoc_gen_clojure_toolchains")
 
 register_toolchains("@protoc_gen_clojure_toolchains//:all")

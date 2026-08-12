@@ -19,7 +19,7 @@ rule.
 # JavaInfo and CcInfo.
 load("@protobuf//bazel/common:proto_info.bzl", "ProtoInfo")
 
-TOOLCHAIN_TYPE = "@protoc_gen_clojure//bazel:toolchain_type"
+TOOLCHAIN_TYPE = "@protoc_gen_clojure//clojure:toolchain_type"
 
 # protobuf's own toolchain type for protoc, and the only route to a PREBUILT
 # protoc. This rule used to depend on `@protobuf//:protoc` directly, which is a
@@ -58,7 +58,7 @@ def _plugin(ctx):
     if not toolchain:
         fail(
             "no protoc-gen-clojure toolchain is registered. Either register one:\n" +
-            '    plugin = use_extension("@protoc_gen_clojure//bazel:extensions.bzl", "toolchains")\n' +
+            '    plugin = use_extension("@protoc_gen_clojure//clojure:extensions.bzl", "toolchains")\n' +
             '    use_repo(plugin, "protoc_gen_clojure_toolchains")\n' +
             '    register_toolchains("@protoc_gen_clojure_toolchains//:all")\n' +
             "or pass an executable explicitly via this rule's `plugin` attribute.",

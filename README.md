@@ -45,7 +45,7 @@ Download a binary for your platform from
 `protoc-gen-<name>`, and that is what makes `--clojure_out` work:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.2.0
 curl -fsSLo protoc-gen-clojure \
   "https://github.com/bpalermo/protoc-gen-clojure/releases/download/v$VERSION/protoc-gen-clojure_${VERSION}_linux_x86_64"
 chmod +x protoc-gen-clojure && mv protoc-gen-clojure /usr/local/bin/
@@ -99,14 +99,17 @@ publishing there is not self-serve. See `buf.plugin.yaml`.
 
 ### Bazel
 
+New to Bazel? Start at [bazel.build](https://bazel.build) — this section assumes a
+bzlmod project (`MODULE.bazel`), which is the default from Bazel 7 on.
+
 Consumers need **no Clojure, no JVM and no GraalVM**: the toolchain fetches a
 prebuilt native binary for the host platform.
 
 ```starlark
 # MODULE.bazel
-bazel_dep(name = "protoc_gen_clojure", version = "0.1.0")
+bazel_dep(name = "protoc_gen_clojure", version = "0.2.0")
 
-plugin = use_extension("@protoc_gen_clojure//bazel:extensions.bzl", "toolchains")
+plugin = use_extension("@protoc_gen_clojure//clojure:extensions.bzl", "toolchains")
 use_repo(plugin, "protoc_gen_clojure_toolchains")
 
 register_toolchains("@protoc_gen_clojure_toolchains//:all")
@@ -114,7 +117,7 @@ register_toolchains("@protoc_gen_clojure_toolchains//:all")
 
 ```starlark
 # BUILD.bazel
-load("@protoc_gen_clojure//bazel:defs.bzl", "clojure_proto_library")
+load("@protoc_gen_clojure//clojure:defs.bzl", "clojure_proto_library")
 
 clojure_proto_library(
     name = "hello_clj",
@@ -124,7 +127,11 @@ clojure_proto_library(
 ```
 
 A complete, working example is in [`examples/bzlmod`](examples/bzlmod) — which is
-also the module BCR runs against on every release.
+also the module BCR runs against on every release. Full attribute reference for
+every public symbol is in [`docs/`](docs), generated from the Starlark docstrings:
+[`clojure_proto_library`](docs/defs.md),
+[the toolchain](docs/toolchain.md),
+[the module extension](docs/extensions.md).
 
 `clojure_proto_library` is a real Starlark rule rather than a `genrule` for a
 specific reason: protoc must be able to resolve every transitive import, and the

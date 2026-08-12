@@ -12,12 +12,12 @@ platform — a `:all` pattern only sees one package, so the toolchain declaratio
 have to live together in that one package.
 """
 
-load("//bazel:versions.bzl", "BINARIES", "PLATFORMS", "VERSION")
+load("//clojure:versions.bzl", "BINARIES", "PLATFORMS", "VERSION")
 
 _RELEASE_URL = "https://github.com/bpalermo/protoc-gen-clojure/releases/download/v{version}/{asset}"
 
 _BINARY_BUILD = """\
-load("@protoc_gen_clojure//bazel:toolchain.bzl", "protoc_gen_clojure_toolchain")
+load("@protoc_gen_clojure//clojure:toolchain.bzl", "protoc_gen_clojure_toolchain")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -50,7 +50,7 @@ toolchain(
     name = "{platform}",
     exec_compatible_with = {constraints},
     toolchain = "@protoc_gen_clojure_{platform}//:impl",
-    toolchain_type = "@protoc_gen_clojure//bazel:toolchain_type",
+    toolchain_type = "@protoc_gen_clojure//clojure:toolchain_type",
 )
 """
 
@@ -73,7 +73,7 @@ def _toolchains_impl(mctx):
     if not BINARIES:
         fail(
             "protoc_gen_clojure: no prebuilt binaries are pinned in this checkout.\n" +
-            "bazel/versions.bzl is populated only in a released source archive, so\n" +
+            "clojure/versions.bzl is populated only in a released source archive, so\n" +
             "depend on a released version (BCR or the release tarball) rather than on\n" +
             "a git checkout. To build from source instead, pass\n" +
             "@protoc_gen_clojure//src/protoc_gen_clojure:protoc_gen_clojure_jvm to\n" +
