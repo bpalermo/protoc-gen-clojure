@@ -32,12 +32,16 @@ readonly repo_root
 
 tag="${1:-}"
 if [[ -z "$tag" ]]; then
-  tag="$(gh release list --repo "$repo" --limit 1 --json tagName,isPrerelease \
-    --jq 'map(select(.isPrerelease == false)) | .[0].tagName')"
-  # A prerelease must not be picked up silently: it would report the consumption
-  # story as working while testing an artifact no consumer is told to use.
-  [[ -n "$tag" && "$tag" != "null" ]] || {
-    echo "no stable release found in $repo" >&2
+  # A prerelease must not be picked up silently: it would report the consumption story
+  # as working while testing an artifact no consumer is told to use. But the filter has
+  # to look PAST prereleases rather than at only the newest release — with --limit 1,
+  # cutting v0.2.0-rc1 would make this claim there is no stable release at all, while
+  # v0.1.0 sits right there. Drafts are excluded too: their assets are not fetchable by
+  # an anonymous consumer, which is precisely what this checks.
+  tag="$(gh release list --repo "$repo" --limit 50 --json tagName,isPrerelease,isDraft \
+    --jq 'map(select(.isPrerelease == false and .isDraft == false)) | .[0].tagName // empty')"
+  [[ -n "$tag" ]] || {
+    echo "no stable, non-draft release found in the 50 most recent in $repo" >&2
     exit 1
   }
 fi
@@ -141,9 +145,53 @@ echo "==> generated $(basename "$out"): $(wc -l <"$out" | tr -d ' ') lines, all 
 # Name the binary that did the work, and its hash. Without this the check could pass
 # while silently using something other than the downloaded asset, and a reader has no
 # way to tell from a green tick.
-bin="$(find "$(bazel info output_base)/external" -type f -name 'protoc-gen-clojure' 2>/dev/null | head -1)"
-if [[ -n "$bin" ]]; then
-  echo "==> plugin used: $bin"
+#
+# Pull the plugin path out of the action itself rather than searching the external
+# directory: the toolchain declares a repo per platform, so a `find` can return another
+# platform's binary and report a hash that had nothing to do with this build.
+# `--plugin=protoc-gen-clojure=` is the exact argument protoc was given.
+#
+# tr/sed rather than `grep -o`: the pattern begins with `--`, and grep implementations
+# differ on how they take that (ugrep exits 2 on `-oE --`, which silently turned this
+# into a skipped check the first time). aquery quotes each argument, so the token arrives
+# as '--plugin=protoc-gen-clojure=external/...'; the quotes are dropped with tr rather
+# than matched in the pattern, because BSD sed rejected the \{0,1\} interval that took
+# — and, being inside a pipefail pipeline, took the whole check down with exit 2 instead
+# of reporting anything.
+plugin_arg="$(bazel aquery //:hello_clj 2>/dev/null |
+  tr ' ' '\n' |
+  tr -d "'" |
+  sed -n 's/^--plugin=protoc-gen-clojure=//p' |
+  head -1 || true)"
+plugin_arg="${plugin_arg%,}"
+
+# Fatal, not a warning. This is the assertion that the toolchain — rather than anything
+# local — did the work, so failing to establish it must fail the check.
+[[ -n "$plugin_arg" ]] || {
+  echo "FAIL: could not determine which plugin the action used" >&2
+  exit 1
+}
+case "$plugin_arg" in
+  *external/protoc_gen_clojure*toolchains*) ;;
+  *)
+    echo "FAIL: codegen did not use a toolchain-provided binary: $plugin_arg" >&2
+    exit 1
+    ;;
+esac
+
+echo "==> plugin used: $plugin_arg"
+
+# `execution_root`, not `execroot`: Bazel 9 does not have the latter key and `bazel info`
+# exits 2 for an unknown one, which under `set -e` killed this check silently — no
+# message, just a non-zero exit after a successful build.
+#
+# Guarded with `|| true` and reported as a warning rather than a failure, because the
+# hash is DIAGNOSTIC. The assertion that matters — that codegen went through a
+# toolchain-provided binary — is the fatal check above and does not depend on this key
+# continuing to exist.
+execution_root="$(bazel info execution_root 2>/dev/null || true)"
+bin="${execution_root:+$execution_root/$plugin_arg}"
+if [[ -n "$bin" && -f "$bin" ]]; then
   if command -v sha256sum >/dev/null 2>&1; then
     echo "    sha256 $(sha256sum "$bin" | cut -d' ' -f1)"
   else
@@ -151,7 +199,7 @@ if [[ -n "$bin" ]]; then
   fi
   echo "    compare against BINARIES in the module's bazel/versions.bzl for this platform"
 else
-  echo "WARN: could not locate the fetched binary to report its hash" >&2
+  echo "WARN: could not hash $plugin_arg — 'bazel info execution_root' gave nothing" >&2
 fi
 
 echo "==> OK: $tag is consumable with no Clojure, JVM or GraalVM in the consumer"
