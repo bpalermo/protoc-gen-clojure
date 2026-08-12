@@ -63,6 +63,21 @@ gh release download "$tag" --repo "$repo" --pattern "$archive" --dir . >/dev/nul
 integrity="sha256-$(openssl dgst -sha256 -binary "$archive" | openssl base64 -A)"
 echo "    integrity $integrity"
 
+# Which package holds the public API, read from the archive rather than assumed.
+# It moved from //bazel to //clojure in 0.2.0, and this script checks whichever
+# release is newest — so hardcoding either label makes it wrong for half the
+# releases it can be pointed at, and wrong in a way that looks like the toolchain
+# is broken rather than like the check is.
+if tar tzf "$archive" | grep -q '^protoc-gen-clojure/clojure/defs\.bzl$'; then
+  api_pkg="clojure"
+elif tar tzf "$archive" | grep -q '^protoc-gen-clojure/bazel/defs\.bzl$'; then
+  api_pkg="bazel"
+else
+  echo "FAIL: $archive has no defs.bzl under bazel/ or clojure/" >&2
+  exit 1
+fi
+echo "    public API package: //$api_pkg"
+
 mkdir -p consumer/example
 cd consumer
 # Pin the same Bazel this repo pins. The module declares 9.x only, and letting
@@ -86,15 +101,19 @@ archive_override(
     urls = ["$url"],
 )
 
-plugin = use_extension("@protoc_gen_clojure//bazel:extensions.bzl", "toolchains")
+plugin = use_extension("@protoc_gen_clojure//$api_pkg:extensions.bzl", "toolchains")
 use_repo(plugin, "protoc_gen_clojure_toolchains")
 
 register_toolchains("@protoc_gen_clojure_toolchains//:all")
 EOF
 
-cat >BUILD.bazel <<'EOF'
-load("@protobuf//bazel:proto_library.bzl", "proto_library")
-load("@protoc_gen_clojure//bazel:defs.bzl", "clojure_proto_library")
+# The loads are printed rather than heredoc'd because only they need $api_pkg
+# expanded, and the rest of this file contains backticks: an unquoted heredoc would
+# run `plugin` as a command substitution instead of writing it as a comment.
+{
+  printf 'load("@protobuf//bazel:proto_library.bzl", "proto_library")\n'
+  printf 'load("@protoc_gen_clojure//%s:defs.bzl", "clojure_proto_library")\n' "$api_pkg"
+  cat <<'EOF'
 
 proto_library(
     name = "hello_proto",
@@ -110,6 +129,7 @@ clojure_proto_library(
     proto = ":hello_proto",
 )
 EOF
+} >BUILD.bazel
 
 cat >example/hello.proto <<'EOF'
 syntax = "proto3";
