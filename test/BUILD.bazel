@@ -59,11 +59,22 @@ sh_library(
     srcs = ["distribution_test.sh"],
 )
 
+# Likewise invoked from CI, not by Bazel: it needs the network and a published
+# release, neither of which belongs in a sandboxed test. Declared here to be
+# shellchecked — the version of this script that shipped first had a
+# `[[ -n "$x" ]] && echo` line, which under `set -e` exits the script when the test
+# is false rather than skipping the echo.
+sh_library(
+    name = "toolchain_consumption_check_src",
+    srcs = ["toolchain_consumption_check.sh"],
+)
+
 shellcheck_test(
     name = "scripts_lint",
     srcs = [
         ":distribution_test_src",
         ":sandbox_conformance_test",
+        ":toolchain_consumption_check_src",
     ],
     tags = ["lint"],
 )
