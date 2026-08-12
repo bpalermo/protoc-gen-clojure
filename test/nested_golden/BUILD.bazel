@@ -1,22 +1,44 @@
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("//bazel/lint:linters.bzl", "buf_test")
 load("//bazel:defs.bzl", "clojure_proto_library")
 
 package(default_visibility = ["//visibility:public"])
 
-# The golden for the nested-message fixture, generated here rather than by
-# //test/proto:generated.
+# The nested-message fixture and its golden, in their own package rather than under
+# //test/proto.
 #
-# Why a second package for one file: //test/proto:generated enumerates every path it
-# emits in `outs`, and that BUILD file is mid-restructure on a working branch.
-# Declaring the output here instead keeps this change off it. `proto` takes a label,
-# so this consumes the very same `fixtures_proto` — the .proto still lives under
-# //test/proto and is still compiled and linted as part of that target — and asks the
-# plugin for just this one output.
+# Why: //test/proto:generated enumerates every path it emits in `outs`, and that BUILD
+# file is mid-restructure on a working branch. Keeping this here keeps the change off
+# it. Fold it back once the restructure lands — `git mv` the .proto under
+# //test/proto/fixtures, add one `outs` entry and one golden entry, delete this package.
 #
-# Fold it into //test/proto:generated once the restructure lands; it is one line there
-# and one deletion here.
+# Why the fixture moved here rather than staying under //test/proto and being consumed
+# from it: clojure_proto_library passes every `proto_info.direct_sources` to protoc, so
+# aiming this at `fixtures_proto` — a glob of eight protos — had protoc generate all
+# eight while Bazel kept the single declared `out` and discarded the rest. The golden
+# was correct; the codegen ran eight times to produce it. Narrowing that to one source
+# needs a proto_library with one src, and proto_library requires its srcs in its own
+# package ("must be in same package as consuming rule"), so the .proto comes along.
+proto_library(
+    name = "nested_proto",
+    srcs = ["fixtures/nested/nested.proto"],
+    # Absolute, so the import path stays fixtures/nested/nested.proto — exactly what it
+    # was under //test/proto. The embedded descriptor records that name, so a different
+    # root here would change the golden for no reason.
+    strip_import_prefix = "/test/nested_golden",
+)
+
 clojure_proto_library(
     name = "generated",
     outs = ["fixtures/nested/nested.clj"],
     plugin = "//src/protoc_gen_clojure:protoc_gen_clojure_jvm",
-    proto = "//test/proto:fixtures_proto",
+    proto = ":nested_proto",
+)
+
+# Leaving //test/proto means leaving its fixtures_proto_lint, so lint it here. The
+# fixtures are the plugin's input contract and are worth linting wherever they live.
+buf_test(
+    name = "nested_proto_lint",
+    srcs = [":nested_proto"],
+    tags = ["lint"],
 )
