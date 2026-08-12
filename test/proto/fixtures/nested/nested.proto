@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package fixtures.nested;
+
+option java_multiple_files = true;
+option java_package = "com.acme.fixtures.nested";
+
+// Nested messages, which no other fixture has. Before this file existed the
+// emitter walked only top-level messages, so nothing in the corpus could tell a
+// recursive walk from a broken one.
+//
+// Three properties are load-bearing here, and each one is a bug this file catches:
+//
+//  1. A NESTED MESSAGE AND A MAP FIELD IN THE SAME MESSAGE. map<k,v> synthesises a
+//     nested map-entry message, so a walk that recurses without checking
+//     options.map_entry emits a record for CountsEntry — an encoding detail the
+//     schema never declared. A top-level-only walk skipped those by accident;
+//     nothing proved the recursion means it.
+//  2. TWO LEVELS. Outer.Inner.Innermost catches a walk that recurses exactly once,
+//     and pins the Java nesting spelling, which is `$` at every level below the
+//     first: com.acme.fixtures.nested.Outer$Inner$Innermost.
+//  3. A NESTED NAME THAT COLLIDES WITH A TOP-LEVEL ONE. `Inner` exists both nested
+//     in Outer and at the top level. They are different types with different
+//     fields, so a scheme naming the nested record `Inner` would silently emit one
+//     record twice and encode against whichever won.
+message Outer {
+  string id = 1;
+  // Same message as the nested types below — see (1).
+  map<string, int32> counts = 2;
+  Inner inner = 3;
+
+  message Inner {
+    string name = 1;
+    // A map two levels down, so the skip is exercised below the root too.
+    map<string, string> labels = 2;
+    Innermost innermost = 3;
+
+    message Innermost {
+      int32 depth = 1;
+    }
+  }
+}
+
+// Same simple name as Outer.Inner, deliberately, with a different field — see (3).
+message Inner {
+  string unrelated = 1;
+}
