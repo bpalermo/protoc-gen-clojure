@@ -104,6 +104,8 @@ write_source_files(
         "golden/fixtures/e2023/kitchen.clj": "//test/proto:fixtures/e2023/kitchen.clj",
         "golden/fixtures/e2024/kitchen.clj": "//test/proto:fixtures/e2024/kitchen.clj",
         "golden/fixtures/e2024legacy/legacy_style.clj": "//test/proto:fixtures/e2024legacy/legacy_style.clj",
+        # Declared in its own package; see //test/nested_golden.
+        "golden/fixtures/nested/nested.clj": "//test/nested_golden:fixtures/nested/nested.clj",
         "golden/fixtures/p2/kitchen.clj": "//test/proto:fixtures/p2/kitchen.clj",
         "golden/fixtures/p3/kitchen.clj": "//test/proto:fixtures/p3/kitchen.clj",
     },

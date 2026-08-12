@@ -101,11 +101,13 @@
 
 (deftest nested-types-are-emitted
   ;; Nested messages used to get no record (#2); the emitter named them in a
-  ;; "NOT GENERATED" notice instead. Now they are generated, so this asserts on the
-  ;; emitted TEXT rather than on the message tree — the golden files would normally
-  ;; carry this, and until the nested fixture lands (see the PR) this is what stands
-  ;; in for them. Map entries must still produce nothing: map<k,v> synthesises a
-  ;; nested *Entry message that is an encoding detail, not a declared type.
+  ;; "NOT GENERATED" notice instead.
+  ;;
+  ;; golden/fixtures/nested/nested.clj is now the contract for what nested emission
+  ;; looks like, produced by the real plugin over a real proto. What this keeps is the
+  ;; part a fixture cannot state as sharply: that the "NOT GENERATED" notice is gone,
+  ;; and that a map-entry type produces nothing — asserted here against a descriptor
+  ;; built by hand, so it holds even for map entries protoc would refuse to compile.
   (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
                 (.setName "demo/nest.proto")
                 (.addMessageType

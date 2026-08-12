@@ -1,0 +1,22 @@
+load("//bazel:defs.bzl", "clojure_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# The golden for the nested-message fixture, generated here rather than by
+# //test/proto:generated.
+#
+# Why a second package for one file: //test/proto:generated enumerates every path it
+# emits in `outs`, and that BUILD file is mid-restructure on a working branch.
+# Declaring the output here instead keeps this change off it. `proto` takes a label,
+# so this consumes the very same `fixtures_proto` — the .proto still lives under
+# //test/proto and is still compiled and linted as part of that target — and asks the
+# plugin for just this one output.
+#
+# Fold it into //test/proto:generated once the restructure lands; it is one line there
+# and one deletion here.
+clojure_proto_library(
+    name = "generated",
+    outs = ["fixtures/nested/nested.clj"],
+    plugin = "//src/protoc_gen_clojure:protoc_gen_clojure_jvm",
+    proto = "//test/proto:fixtures_proto",
+)
