@@ -75,8 +75,11 @@ jobs:
           ln -sf "$(command -v musl-gcc)" "$HOME/muslbin/x86_64-linux-musl-gcc"
           # musl-tools ships no musl-built libz.a, which is the whole subject of #17, so
           # build one. This is GraalVM's own documented recipe.
-          curl -sSLO https://zlib.net/zlib-1.3.1.tar.gz
-          tar xzf zlib-1.3.1.tar.gz
+          # From the GitHub release, not zlib.net: that site moves older releases to
+          # fossils/, so the versioned URL 404s and `tar` then chokes on an HTML error
+          # page — which is how the first run of this job failed.
+          curl -sSLo zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+          tar xzf zlib.tar.gz
           cd zlib-1.3.1
           CC=musl-gcc ./configure --static --prefix="$HOME/muslzlib"
           make -j"$(nproc)" install
