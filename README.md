@@ -51,11 +51,17 @@ curl -fsSLo protoc-gen-clojure \
 chmod +x protoc-gen-clojure && mv protoc-gen-clojure /usr/local/bin/
 ```
 
-The Linux binaries are dynamically linked and carry a glibc floor (currently
-2.39), so a sufficiently old distribution will reject them with
-`GLIBC_2.xx not found`. The release asserts that floor so it cannot drift
-unnoticed. Static linking would remove it, but GraalVM's `--static` requires a
-musl-built `libz.a` that neither the Ubuntu packages nor a zig toolchain provide.
+`linux_x86_64` is **fully static** — no libc dependency at all, so it runs on any
+distribution, including Alpine and a `scratch` container.
+
+`linux_aarch64` is dynamically linked and carries a glibc floor of 2.34, so a
+distribution older than roughly Debian 12 or Ubuntu 22.04 will reject it with
+`GLIBC_2.xx not found`. The release asserts that floor so it cannot drift unnoticed.
+
+The asymmetry is not a preference. GraalVM's `--libc=musl` demands
+`x86_64-linux-musl-gcc` even when running on arm64 with the aarch64 compiler on
+`PATH`, so it hardcodes the x64 triple and an arm64 static binary cannot be produced
+at all (issue #17).
 
 On macOS, a binary downloaded from the internet carries a quarantine attribute
 and will be killed on first run. Clear it:

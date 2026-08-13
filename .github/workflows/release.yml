@@ -107,8 +107,56 @@ jobs:
           # Only main writes caches; see ci.yml. A tag ref's caches could never be
           # read by anything anyway.
           cache-save: ${{ github.ref == 'refs/heads/main' }}
+      # linux_x86_64 ships FULLY STATIC, so it runs on any distribution — including
+      # debian11, Alpine and scratch — instead of carrying a glibc floor.
+      #
+      # Not aarch64: native-image demands 'x86_64-linux-musl-gcc' even when running on
+      # arm64 with the aarch64 compiler on PATH, so GraalVM hardcodes the x64 triple for
+      # --libc=musl and an arm64 static build cannot be produced at all. Measured on
+      # both arches, see issue #17.
+      #
+      # apt rather than GraalVM's prebuilt musl toolchain: both were tried and both
+      # produce a byte-for-byte equivalent result, and this one needs no third-party
+      # binary from gds.oracle.com. The cost is compiling zlib, which is seconds.
+      - name: musl toolchain and a musl-built zlib
+        if: matrix.os_arch == 'linux_x86_64'
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y musl-tools
+
+          # musl-tools installs `musl-gcc`, but native-image resolves its C compiler BY
+          # NAME and takes no path argument, so the triple-named binary has to exist.
+          # musl-gcc is a wrapper around the system gcc with musl's headers and libs,
+          # and works unchanged under the other name.
+          sudo ln -sf "$(command -v musl-gcc)" /usr/local/bin/x86_64-linux-musl-gcc
+
+          # musl-tools ships no musl-built libz.a, and that single missing archive is
+          # what blocked static linking here for months. GraalVM's own recipe:
+          # configure zlib with CC=musl-gcc and install it where -H:CLibraryPath points
+          # (/opt/musl-zlib/lib, the path //src/protoc_gen_clojure:BUILD.bazel names).
+          #
+          # From the GitHub release, not zlib.net: that site moves older releases into
+          # fossils/, so the versioned URL 404s and tar chokes on the HTML error page.
+          curl -sSLo /tmp/zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+          tar xzf /tmp/zlib.tar.gz -C /tmp
+          cd /tmp/zlib-1.3.1
+          CC=musl-gcc ./configure --static --prefix=/tmp/musl-zlib
+          make -j"$(nproc)"
+          make install
+          sudo mkdir -p /opt/musl-zlib
+          sudo cp -r /tmp/musl-zlib/* /opt/musl-zlib/
+          test -f /opt/musl-zlib/lib/libz.a
+
       - name: build the native binary
-        run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure
+        run: |
+          # The flag is opt-in precisely so that only this leg needs the musl toolchain;
+          # see //bazel:BUILD.bazel.
+          if [ "${{ matrix.os_arch }}" = "linux_x86_64" ]; then
+            bazel build --//bazel:static_musl=true //src/protoc_gen_clojure:protoc_gen_clojure
+          else
+            bazel build //src/protoc_gen_clojure:protoc_gen_clojure
+          fi
 
       # A matrix misconfiguration would otherwise ship four copies of one host
       # build under four different names, and nothing downstream would notice.
@@ -125,10 +173,15 @@ jobs:
 
           # Report and bound the glibc floor of the Linux binaries.
           #
-          # They are dynamically linked: GraalVM's --static needs a musl-built
-          # libz.a, which neither zlib1g-dev nor a zig toolchain provides (see the
-          # tracking issue). A user on an older distribution gets
-          # "GLIBC_2.xx not found" from a binary that ran fine in CI.
+          # linux_x86_64 is now statically linked and has NO floor: objdump finds no
+          # GLIBC_* symbols, `floor` comes out empty, this prints "none" and the
+          # assertion below is skipped. That is the intended reading, not a hole — a
+          # static binary with a glibc floor is a contradiction, and if one ever appears
+          # the assertion still fires.
+          #
+          # linux_aarch64 remains dynamic, because native-image cannot produce an arm64
+          # musl binary (issue #17). Its floor is what this guards. A user on an older
+          # distribution gets "GLIBC_2.xx not found" from a binary that ran fine in CI.
           #
           # Asserting it makes the floor a deliberate, visible property rather than
           # an accident of the runner image: bumping the runner will fail here
