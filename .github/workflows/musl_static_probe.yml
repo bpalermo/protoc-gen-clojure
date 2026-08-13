@@ -66,7 +66,18 @@ jobs:
           set -euxo pipefail
           work="$(mktemp -d)"
           cd "$work"
-          cp "$GITHUB_WORKSPACE/.bazelversion" .
+          # Bazel 8, NOT this repo's pinned 9.2.0. toolchains_musl 0.1.27 does not load
+          # under Bazel 9.2:
+          #
+          #   musl_cc_toolchain_config.bzl:543: Error in rule:
+          #     at index 0 of provides, got element of type NoneType, want Provider
+          #
+          # — the same class of breakage this repo already documents for rules_graalvm
+          # ("name 'JavaInfo' is not defined"), and it happens identically on x86_64 and
+          # aarch64. Nothing about a static archive depends on which Bazel produced it,
+          # so the scratch module drops to 8.x purely to get a musl libz.a out. If
+          # toolchains_musl gains Bazel 9 support this can go back to matching the repo.
+          echo "8.7.0" >.bazelversion
           cat >MODULE.bazel <<'EOF'
           module(name = "musl_zlib_probe", version = "0.0.0")
 
