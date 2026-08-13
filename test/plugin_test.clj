@@ -350,6 +350,31 @@
                   :nest-in-file-class true})
             (plain-msg "Inner") ["Outer" "Inner"]))))
 
+  (testing "and NOT before edition 2024, where the feature does not exist and the
+            outer-class rules are not implemented. Reachable because the feature is
+            read off unknown fields, which skips the validation that would stop
+            protoc accepting it there — so a hand-made descriptor set can carry it.
+            proto3 without java_multiple_files means no hint at all;"
+    (is (nil? (#'plugin/java-class-name
+               (fdp {:package "acme" :java-package "com.acme" :file-name "kitchen.proto"
+                     :nest-in-file-class true})
+               (msg-with-nest "Tiny" true) ["Tiny"]))))
+
+  (testing "and with java_multiple_files it falls through to the pre-2024 answer,
+            the top-level name, rather than guessing a file class"
+    (is (= "com.acme.Tiny"
+           (#'plugin/java-class-name
+            (fdp {:package "acme" :java-package "com.acme" :file-name "kitchen.proto"
+                  :multiple-files? true :nest-in-file-class true})
+            (msg-with-nest "Tiny" true) ["Tiny"]))))
+
+  (testing "edition 2023 is likewise excluded"
+    (is (nil? (#'plugin/java-class-name
+               (fdp {:package "acme" :java-package "com.acme" :file-name "kitchen.proto"
+                     :edition DescriptorProtos$Edition/EDITION_2023
+                     :nest-in-file-class true})
+               (msg-with-nest "Tiny" true) ["Tiny"]))))
+
   (testing "java_outer_classname wins over the derived name"
     (is (= "com.acme.Custom$Tiny"
            (#'plugin/java-class-name

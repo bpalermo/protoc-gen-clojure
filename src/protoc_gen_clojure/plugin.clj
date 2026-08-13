@@ -180,7 +180,7 @@
 ;;                                          defaults to NO, so messages are top level
 ;;                                          even without java_multiple_files
 ;;   nest_in_file_class = YES            -> <pkg>.<FileClass>$<Message>, wherever the
-;;                                          feature is set, on the message or the file
+;;   (edition 2024 or later only)           feature is set, on the message or the file
 ;;   anything else (proto2, proto3 or     -> no hint. The message is nested in the file
 ;;   edition 2023 without multiple_files)   class, and the pre-2024 outer-class rules
 ;;                                          (camel-cased basename, plus an OuterClass
@@ -207,12 +207,17 @@
 (def ^:private edition-2024-number
   (.getNumber DescriptorProtos$Edition/EDITION_2024))
 
+(defn- edition-2024+?
+  "Is `fdp` an editions file at 2024 or later? Where nest_in_file_class exists, and
+  where the outer-class default is the one file-class-name implements."
+  [^DescriptorProtos$FileDescriptorProto fdp]
+  (and (= "editions" (.getSyntax fdp))
+       (>= (.getNumber (.getEdition fdp)) edition-2024-number)))
+
 (defn- top-level-java-class?
   [^DescriptorProtos$FileDescriptorProto fdp]
-  (let [opts (.getOptions fdp)]
-    (or (.getJavaMultipleFiles opts)
-        (and (= "editions" (.getSyntax fdp))
-             (>= (.getNumber (.getEdition fdp)) edition-2024-number)))))
+  (or (.getJavaMultipleFiles (.getOptions fdp))
+      (edition-2024+? fdp)))
 
 ;; (pb.java).nest_in_file_class is read off the UNKNOWN FIELDS of the FeatureSet,
 ;; not through the generated JavaFeaturesProto extension. That is a deliberate
@@ -308,10 +313,17 @@
         pkg  (if (.hasJavaPackage opts) (.getJavaPackage opts) (.getPackage fdp))]
     (when (seq pkg)
       (cond
-        ;; An explicit YES moves the message back inside the file class. Only
-        ;; reachable from edition 2024+, which is why file-class-name needs no
-        ;; pre-2024 rules.
-        (nest-in-file-class? fdp md)
+        ;; An explicit YES moves the message back inside the file class — but only
+        ;; from edition 2024, which is the gate file-class-name's single rule
+        ;; depends on. The edition test is not redundant with the feature being
+        ;; set: the feature is read off UNKNOWN FIELDS, which bypasses the
+        ;; validation that would stop protoc accepting it in a proto2/proto3 file,
+        ;; and --descriptor_set_in takes descriptor sets from anywhere. Without the
+        ;; gate, such an input would be handed the 2024 "<Base>Proto" name — a
+        ;; guess, from the rule set this deliberately does not implement for
+        ;; earlier syntaxes. Falling through instead yields the pre-2024 answer:
+        ;; the top-level name under java_multiple_files, and no hint otherwise.
+        (and (edition-2024+? fdp) (nest-in-file-class? fdp md))
         (str pkg "." (file-class-name fdp) "$" (str/join "$" path))
 
         (top-level-java-class? fdp)
