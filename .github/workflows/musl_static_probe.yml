@@ -111,6 +111,13 @@ jobs:
         continue-on-error: true
         run: |
           set -uxo pipefail
+          # Materialise the SDK first. External files only appear in the execroot when
+          # something that needs them is built, and the deploy jar does not need
+          # GraalVM — so resolving the launcher's path before this gives a correct path
+          # to a file that is not there yet. The whole tree, not just the launcher: it
+          # is a symlink into lib/svm/bin and resolves JAVA_HOME relative to itself.
+          bazel build @graalvm//:bin-native-image @graalvm//:files
+
           # cquery prints an EXECROOT-relative path, and this step runs in the
           # workspace, so it has to be resolved against `bazel info execution_root`.
           # Note `execution_root`, not `execroot`: the latter is not a Bazel 9 key and
