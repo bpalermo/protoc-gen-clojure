@@ -101,6 +101,17 @@ jobs:
           echo "libz=$libz" >>"$GITHUB_OUTPUT"
           echo "dir=$(dirname "$libz")" >>"$GITHUB_OUTPUT"
           file "$libz" || true
+          # native-image insists on `<triple>-linux-musl-gcc` on PATH and will not take
+          # a path argument for it, so locate the toolchain's own compiler and export
+          # its directory. This is the "no documented standalone compiler path" problem
+          # from the issue: the binaries exist, but reaching them means poking inside
+          # toolchains_musl's external repo rather than using a published label.
+          gcc="$(find "$(bazel info output_base)/external" -type f -name '*-linux-musl-gcc' 2>/dev/null | head -1)"
+          echo "musl gcc: ${gcc:-NOT FOUND}"
+          if [ -n "$gcc" ]; then
+            echo "gccdir=$(dirname "$gcc")" >>"$GITHUB_OUTPUT"
+            "$gcc" --version 2>&1 | head -2 || true
+          fi
           # A musl object has no GLIBC symbol versions. Cheap sanity check.
           if nm "$libz" 2>/dev/null | grep -q GLIBC; then
             echo "::warning::libz.a references GLIBC symbols — the musl toolchain may not have applied"
@@ -127,6 +138,12 @@ jobs:
           echo "native-image: $ni"
           ls -l "$ni" || { echo "::error::native-image not found at $ni" >&2; exit 1; }
           jar=bazel-bin/src/protoc_gen_clojure/protoc_gen_clojure_jvm_deploy.jar
+
+          # The compiler goes on PATH because native-image resolves it by name only.
+          export PATH="${{ steps.zlib.outputs.gccdir }}:$PATH"
+          echo "looking for: $(uname -m)-linux-musl-gcc"
+          ls "${{ steps.zlib.outputs.gccdir }}" | head -20
+
           "$ni" \
             --static \
             --libc=musl \
