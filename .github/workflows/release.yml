@@ -138,7 +138,19 @@ jobs:
           #
           # From the GitHub release, not zlib.net: that site moves older releases into
           # fossils/, so the versioned URL 404s and tar chokes on the HTML error page.
-          curl -sSLo /tmp/zlib.tar.gz https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+          # --fail matters more than it looks: without it curl writes the error page
+          # INTO the file on a 404 and tar then fails on HTML with a message that says
+          # nothing about the download. That is exactly how the first attempt at this
+          # failed, against zlib.net, which moves older releases into fossils/.
+          curl --fail --location --silent --show-error \
+            -o /tmp/zlib.tar.gz \
+            https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+
+          # This tarball is compiled into a RELEASED binary, so it is pinned by content
+          # rather than trusted by URL. A tag can be moved; this cannot.
+          echo "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23  /tmp/zlib.tar.gz" \
+            | sha256sum -c -
+
           tar xzf /tmp/zlib.tar.gz -C /tmp
           cd /tmp/zlib-1.3.1
           CC=musl-gcc ./configure --static --prefix=/tmp/musl-zlib
