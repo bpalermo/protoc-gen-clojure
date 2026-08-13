@@ -3,6 +3,30 @@
 # The package exists so //bazel:native_image.bzl is a loadable label; the public
 # ruleset lives in //clojure, per https://bazel.build/rules/deploying.
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["native_image.bzl"])
+
+# Opt-in fully static Linux binaries.
+#
+# `--//bazel:static_musl=true` adds --static --libc=musl to the native-image build.
+# OFF by default, and deliberately so: it needs x86_64-linux-musl-gcc on PATH and a
+# musl-built libz.a on disk, so making it the default would break every Linux build
+# by anyone who has not installed those. The release workflow turns it on for the
+# linux_x86_64 leg and nothing else.
+#
+# x86_64 only, and not by choice. native-image demands 'x86_64-linux-musl-gcc' even
+# when running on arm64 with the aarch64 compiler on PATH — GraalVM hardcodes the x64
+# triple for --libc=musl — so an aarch64 static build is not possible with this
+# GraalVM at all. Measured, not inferred: see issue #17.
+bool_flag(
+    name = "static_musl",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "static_musl_enabled",
+    flag_values = {":static_musl": "True"},
+)
