@@ -1,24 +1,33 @@
 name: musl static probe
 
-# An EXPERIMENT for issue #17, not a gate. Nothing here is wired into the build:
-# it produces no artifact anyone consumes and no job any other workflow depends on.
+# An EXPERIMENT for issue #17, not a gate: no artifact anyone consumes, nothing depends
+# on it.
 #
-# The question it answers: can `--static --libc=musl` link if native-image is handed a
-# musl-built libz.a, and does that hold on aarch64 as well as x86_64? GraalVM's own
-# guide is x64-only and ships an amd64-only toolchain, so bazel-contrib/musl-toolchain
-# (BCR: toolchains_musl) is the only route that could make both released Linux binaries
-# static.
+# Round 1 (runs 31697923747..31699307000) established two facts, recorded on #17:
 #
-# Deliberately does NOT add toolchains_musl to this repo's MODULE.bazel. Registering it
-# would apply musl toolchain resolution to every Linux cc build here, and the point is
-# to learn whether the approach works before paying that. The musl libz.a is built in a
-# scratch module instead, and native-image is invoked directly rather than through
-# //bazel:native_image.bzl, so the probe cannot break the real build.
+#   - x86_64 CAN be built fully static: musl libz.a in -H:CLibraryPath plus
+#     x86_64-linux-musl-gcc on PATH links, produces "not a dynamic executable" with no
+#     GLIBC_* symbols, and runs.
+#   - aarch64 CANNOT. With aarch64-linux-musl-gcc on PATH on an arm64 runner,
+#     native-image still demands 'x86_64-linux-musl-gcc'. GraalVM hardcodes the x64
+#     triple, so this is not a packaging problem and no toolchain choice fixes it.
+#
+# So this round is x86_64 only, and asks the remaining question: what is the cheapest
+# way to put that compiler AND a musl zlib on a runner? Two candidates, head to head,
+# because they fail differently:
+#
+#   apt        `musl-tools` is one apt line, but it installs `musl-gcc` — NOT the
+#              `x86_64-linux-musl-gcc` name native-image looks for — and ships no musl
+#              zlib, so zlib must be compiled here too.
+#   graalvm    GraalVM's own prebuilt toolchain, which its guide says includes zlib.
+#              One download, correct binary name, no compilation — but it is a
+#              third-party binary from gds.oracle.com, so this checks what is in it
+#              rather than trusting the guide.
+#
+# Round 1's approach (toolchains_musl + a Bazel 8 scratch module) is deliberately NOT
+# repeated: it works, but toolchains_musl 0.1.27 cannot load under Bazel 9.2, so it
+# could never move into this repo's build as-is.
 on:
-  # Scoped to this file on purpose. workflow_dispatch only works from the default
-  # branch, so without a pull_request trigger the probe could not run until it was
-  # merged — and merging an experiment to find out whether it works is backwards. The
-  # paths filter keeps it off every other pull request.
   pull_request:
     paths:
       - .github/workflows/musl_static_probe.yml
@@ -29,16 +38,12 @@ permissions:
 
 jobs:
   probe:
-    name: ${{ matrix.runner }} (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.method }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-latest
-            arch: x86_64
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
+        method: [apt, graalvm]
     steps:
       - uses: actions/checkout@v7
 
@@ -48,127 +53,85 @@ jobs:
           disk-cache: ${{ github.workflow }}
           repository-cache: true
 
-      - name: build the deploy jar
-        run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure_jvm_deploy.jar
+      - name: build the deploy jar and fetch the SDK
+        run: |
+          bazel build //src/protoc_gen_clojure:protoc_gen_clojure_jvm_deploy.jar
+          # External files only materialise when something needs them, and the jar does
+          # not need GraalVM. The whole tree, not just the launcher: it is a symlink
+          # into lib/svm/bin and resolves JAVA_HOME relative to itself.
+          bazel build @graalvm//:bin-native-image @graalvm//:files
 
-      # A musl-built libz.a, which is the thing issue #17 has been missing. Built in a
-      # scratch module so that registering musl toolchains cannot affect this repo.
-      #
-      # zlib rather than zlib-ng, deliberately: BCR's zlib overlay is
-      # `cc_library(name = "z")` behind a `zlib` alias, so the archive it produces is
-      # literally libz.a — the name native-image's `-lz` looks for. BCR's zlib-ng is
-      # built with `local_defines = ["ZLIB_COMPAT"]`, so it is a drop-in ABI and a
-      # legitimate fallback if zlib will not build under musl, but its archive is
-      # libzlib-ng.a and would have to be copied to libz.a first.
-      - name: build zlib against musl
-        id: zlib
+      - name: 'apt: musl-tools, plus a zlib compiled against it'
+        if: matrix.method == 'apt'
         run: |
           set -euxo pipefail
-          work="$(mktemp -d)"
-          cd "$work"
-          # Bazel 8, NOT this repo's pinned 9.2.0. toolchains_musl 0.1.27 does not load
-          # under Bazel 9.2:
-          #
-          #   musl_cc_toolchain_config.bzl:543: Error in rule:
-          #     at index 0 of provides, got element of type NoneType, want Provider
-          #
-          # — the same class of breakage this repo already documents for rules_graalvm
-          # ("name 'JavaInfo' is not defined"), and it happens identically on x86_64 and
-          # aarch64. Nothing about a static archive depends on which Bazel produced it,
-          # so the scratch module drops to 8.x purely to get a musl libz.a out. If
-          # toolchains_musl gains Bazel 9 support this can go back to matching the repo.
-          echo "8.7.0" >.bazelversion
-          cat >MODULE.bazel <<'EOF'
-          module(name = "musl_zlib_probe", version = "0.0.0")
+          sudo apt-get update -qq
+          sudo apt-get install -y musl-tools
+          command -v musl-gcc
+          # native-image resolves its compiler BY NAME and takes no path argument, so
+          # the apt name has to be bridged. A symlink is enough: musl-gcc is itself a
+          # wrapper around the system gcc with musl's headers and libs.
+          mkdir -p "$HOME/muslbin"
+          ln -sf "$(command -v musl-gcc)" "$HOME/muslbin/x86_64-linux-musl-gcc"
+          # musl-tools ships no musl-built libz.a, which is the whole subject of #17, so
+          # build one. This is GraalVM's own documented recipe.
+          curl -sSLO https://zlib.net/zlib-1.3.1.tar.gz
+          tar xzf zlib-1.3.1.tar.gz
+          cd zlib-1.3.1
+          CC=musl-gcc ./configure --static --prefix="$HOME/muslzlib"
+          make -j"$(nproc)" install
+          ls -l "$HOME/muslzlib/lib/libz.a"
+          echo "MUSL_BIN=$HOME/muslbin" >>"$GITHUB_ENV"
+          echo "ZLIB_DIR=$HOME/muslzlib/lib" >>"$GITHUB_ENV"
 
-          bazel_dep(name = "zlib", version = "1.3.2")
-          bazel_dep(name = "toolchains_musl", version = "0.1.27", dev_dependency = True)
-          EOF
-          touch BUILD.bazel
-          bazel build @zlib//:zlib
-          # Report every archive produced and what it actually links, rather than
-          # assuming the toolchain took effect. A glibc-built libz.a here is the whole
-          # failure mode of this experiment and must be visible, not inferred.
-          find "$(bazel info bazel-bin)" -name 'libz*.a' -print
-          # Exactly libz.a: native-image links -lz, so a differently named archive in
-          # CLibraryPath is invisible to it and the build fails with the same
-          # "libz:.a is missing" this issue opened with.
-          libz="$(find "$(bazel info bazel-bin)" -name 'libz.a' | head -1)"
-          if [ -z "$libz" ]; then
-            echo "::error::no libz.a produced; see the find output above" >&2
-            exit 1
-          fi
-          echo "libz=$libz" >>"$GITHUB_OUTPUT"
-          echo "dir=$(dirname "$libz")" >>"$GITHUB_OUTPUT"
-          file "$libz" || true
-          # native-image insists on `<triple>-linux-musl-gcc` on PATH and will not take
-          # a path argument for it, so locate the toolchain's own compiler and export
-          # its directory. This is the "no documented standalone compiler path" problem
-          # from the issue: the binaries exist, but reaching them means poking inside
-          # toolchains_musl's external repo rather than using a published label.
-          gcc="$(find "$(bazel info output_base)/external" -type f -name '*-linux-musl-gcc' 2>/dev/null | head -1)"
-          echo "musl gcc: ${gcc:-NOT FOUND}"
-          if [ -n "$gcc" ]; then
-            echo "gccdir=$(dirname "$gcc")" >>"$GITHUB_OUTPUT"
-            "$gcc" --version 2>&1 | head -2 || true
-          fi
-          # A musl object has no GLIBC symbol versions. Cheap sanity check.
-          if nm "$libz" 2>/dev/null | grep -q GLIBC; then
-            echo "::warning::libz.a references GLIBC symbols — the musl toolchain may not have applied"
-          fi
+      - name: "graalvm: the vendor's prebuilt toolchain"
+        if: matrix.method == 'graalvm'
+        run: |
+          set -euxo pipefail
+          cd "$HOME"
+          curl -sSLO https://gds.oracle.com/download/bfs/archive/musl-toolchain-1.2.5-oracle-00001-linux-amd64.tar.gz
+          tar xzf musl-toolchain-1.2.5-oracle-00001-linux-amd64.tar.gz
+          # The guide claims this includes zlib but offers no way to check, so check.
+          # A missing libz.a here is the difference between one download and the whole
+          # of route 1.
+          find "$HOME/musl-toolchain" -name 'libz.a' -o -name 'x86_64-linux-musl-gcc' | sort
+          test -x "$HOME/musl-toolchain/bin/x86_64-linux-musl-gcc"
+          libz="$(find "$HOME/musl-toolchain" -name 'libz.a' | head -1)"
+          test -n "$libz" || { echo "::error::no libz.a in the vendor toolchain" >&2; exit 1; }
+          echo "MUSL_BIN=$HOME/musl-toolchain/bin" >>"$GITHUB_ENV"
+          echo "ZLIB_DIR=$(dirname "$libz")" >>"$GITHUB_ENV"
 
-      - name: attempt the static native-image build
+      - name: build it static
         id: static
         continue-on-error: true
         run: |
           set -uxo pipefail
-          # Materialise the SDK first. External files only appear in the execroot when
-          # something that needs them is built, and the deploy jar does not need
-          # GraalVM — so resolving the launcher's path before this gives a correct path
-          # to a file that is not there yet. The whole tree, not just the launcher: it
-          # is a symlink into lib/svm/bin and resolves JAVA_HOME relative to itself.
-          bazel build @graalvm//:bin-native-image @graalvm//:files
-
-          # cquery prints an EXECROOT-relative path, and this step runs in the
-          # workspace, so it has to be resolved against `bazel info execution_root`.
-          # Note `execution_root`, not `execroot`: the latter is not a Bazel 9 key and
-          # `bazel info` exits 2 on an unknown one.
+          export PATH="$MUSL_BIN:$PATH"
+          x86_64-linux-musl-gcc --version | head -1
           root="$(bazel info execution_root)"
           ni="$root/$(bazel cquery --output=files @graalvm//:bin-native-image 2>/dev/null | head -1)"
-          echo "native-image: $ni"
-          ls -l "$ni" || { echo "::error::native-image not found at $ni" >&2; exit 1; }
-          jar=bazel-bin/src/protoc_gen_clojure/protoc_gen_clojure_jvm_deploy.jar
-
-          # The compiler goes on PATH because native-image resolves it by name only.
-          export PATH="${{ steps.zlib.outputs.gccdir }}:$PATH"
-          echo "looking for: $(uname -m)-linux-musl-gcc"
-          ls "${{ steps.zlib.outputs.gccdir }}" | head -20
-
           "$ni" \
             --static \
             --libc=musl \
             --no-fallback \
             --initialize-at-build-time \
             -H:+ReportExceptionStackTraces \
-            -H:CLibraryPath="${{ steps.zlib.outputs.dir }}" \
-            -jar "$jar" \
-            protoc-gen-clojure-static 2>&1 | tee /tmp/static.log
-          echo "exit=${PIPESTATUS[0]}" >>"$GITHUB_OUTPUT"
+            -H:CLibraryPath="$ZLIB_DIR" \
+            -jar bazel-bin/src/protoc_gen_clojure/protoc_gen_clojure_jvm_deploy.jar \
+            protoc-gen-clojure-static 2>&1 | tail -25
 
-      # Runs whether or not the build succeeded: the failure text IS the result when it
-      # fails, and issue #17 exists because that text was never captured on aarch64.
+      # Always: the failure text is the result when it fails.
       - name: what happened
         if: always()
         run: |
           set +e
-          echo "=== static build outcome: ${{ steps.static.outcome }}"
+          echo "=== method: ${{ matrix.method }}, outcome: ${{ steps.static.outcome }}"
           if [ -x ./protoc-gen-clojure-static ]; then
-            echo "=== file:";  file ./protoc-gen-clojure-static
-            echo "=== ldd:";   ldd  ./protoc-gen-clojure-static 2>&1 | head -5
-            echo "=== glibc symbol versions (empty is the goal):"
-            objdump -T ./protoc-gen-clojure-static 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -u
-            echo "=== does it run?"; ./protoc-gen-clojure-static --version
+            file ./protoc-gen-clojure-static
+            echo "ldd: $(ldd ./protoc-gen-clojure-static 2>&1 | head -2)"
+            echo "glibc symbol versions (empty is the goal): $(objdump -T ./protoc-gen-clojure-static 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -u | tr '\n' ' ')"
+            echo "size: $(du -h ./protoc-gen-clojure-static | cut -f1)"
+            echo "runs: $(./protoc-gen-clojure-static --version)"
           else
-            echo "no binary produced; last 40 lines of the build log:"
-            tail -40 /tmp/static.log 2>/dev/null || echo "(no log)"
+            echo "no binary produced"
           fi
