@@ -15,6 +15,13 @@ name: musl static probe
 # scratch module instead, and native-image is invoked directly rather than through
 # //bazel:native_image.bzl, so the probe cannot break the real build.
 on:
+  # Scoped to this file on purpose. workflow_dispatch only works from the default
+  # branch, so without a pull_request trigger the probe could not run until it was
+  # merged — and merging an experiment to find out whether it works is backwards. The
+  # paths filter keeps it off every other pull request.
+  pull_request:
+    paths:
+      - .github/workflows/musl_static_probe.yml
   workflow_dispatch:
 
 permissions:
