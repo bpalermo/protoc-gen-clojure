@@ -21,7 +21,7 @@
 # is Bazel 9 only, so declaring it buys nothing but a warning.
 module(
     name = "protoc_gen_clojure",
-    version = "0.2.0",
+    version = "0.3.0",
 )
 
 bazel_dep(name = "platforms", version = "1.1.0")
