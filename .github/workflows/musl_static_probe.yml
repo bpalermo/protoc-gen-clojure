@@ -111,8 +111,14 @@ jobs:
         continue-on-error: true
         run: |
           set -uxo pipefail
-          ni="$(bazel cquery --output=files @graalvm//:bin-native-image 2>/dev/null | head -1)"
+          # cquery prints an EXECROOT-relative path, and this step runs in the
+          # workspace, so it has to be resolved against `bazel info execution_root`.
+          # Note `execution_root`, not `execroot`: the latter is not a Bazel 9 key and
+          # `bazel info` exits 2 on an unknown one.
+          root="$(bazel info execution_root)"
+          ni="$root/$(bazel cquery --output=files @graalvm//:bin-native-image 2>/dev/null | head -1)"
           echo "native-image: $ni"
+          ls -l "$ni" || { echo "::error::native-image not found at $ni" >&2; exit 1; }
           jar=bazel-bin/src/protoc_gen_clojure/protoc_gen_clojure_jvm_deploy.jar
           "$ni" \
             --static \
