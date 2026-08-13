@@ -21,10 +21,20 @@
 # darwin_arm64 release assets, and the toolchain's platform selection between them,
 # get exercised at all.
 #
+# `macos` is NOT here, at a BCR maintainer's request on the 0.2.0 entry
+# (bazelbuild/bazel-central-registry#10035): that platform still runs Intel Macs, and
+# the registry would rather not spend them. The cost is ours to know rather than
+# theirs: darwin_x86_64 is then the one released asset no presubmit executes. It is
+# still built, checksummed and attested by the release, and //test:distribution_test
+# covers the same binary shape on an Intel runner in this repo — but nothing verifies
+# the toolchain FETCHING it. If GitHub's Intel image disappears in Fall 2027 as
+# scheduled, that asset needs a cross-build or dropping, and this is where the gap
+# will be felt first.
+#
 # bazel is 9.x only. The module has never been built with Bazel 8, and claiming
 # support that fails here would block publication rather than merely disappoint.
 matrix:
-  platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos", "macos_arm64"]
+  platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos_arm64"]
   bazel: ["9.x"]
 
 tasks:
@@ -42,7 +52,7 @@ tasks:
 bcr_test_module:
   module_path: "examples/bzlmod"
   matrix:
-    platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos", "macos_arm64"]
+    platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos_arm64"]
     bazel: ["9.x"]
   tasks:
     run_tests:
