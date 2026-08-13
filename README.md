@@ -45,7 +45,7 @@ Download a binary for your platform from
 `protoc-gen-<name>`, and that is what makes `--clojure_out` work:
 
 ```sh
-VERSION=0.2.0
+VERSION=0.3.0
 curl -fsSLo protoc-gen-clojure \
   "https://github.com/bpalermo/protoc-gen-clojure/releases/download/v$VERSION/protoc-gen-clojure_${VERSION}_linux_x86_64"
 chmod +x protoc-gen-clojure && mv protoc-gen-clojure /usr/local/bin/
@@ -113,7 +113,7 @@ prebuilt native binary for the host platform.
 
 ```starlark
 # MODULE.bazel
-bazel_dep(name = "protoc_gen_clojure", version = "0.2.0")
+bazel_dep(name = "protoc_gen_clojure", version = "0.3.0")
 
 plugin = use_extension("@protoc_gen_clojure//clojure:extensions.bzl", "toolchains")
 use_repo(plugin, "protoc_gen_clojure_toolchains")
