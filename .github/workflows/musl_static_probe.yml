@@ -1,0 +1,126 @@
+name: musl static probe
+
+# An EXPERIMENT for issue #17, not a gate. Nothing here is wired into the build:
+# it produces no artifact anyone consumes and no job any other workflow depends on.
+#
+# The question it answers: can `--static --libc=musl` link if native-image is handed a
+# musl-built libz.a, and does that hold on aarch64 as well as x86_64? GraalVM's own
+# guide is x64-only and ships an amd64-only toolchain, so bazel-contrib/musl-toolchain
+# (BCR: toolchains_musl) is the only route that could make both released Linux binaries
+# static.
+#
+# Deliberately does NOT add toolchains_musl to this repo's MODULE.bazel. Registering it
+# would apply musl toolchain resolution to every Linux cc build here, and the point is
+# to learn whether the approach works before paying that. The musl libz.a is built in a
+# scratch module instead, and native-image is invoked directly rather than through
+# //bazel:native_image.bzl, so the probe cannot break the real build.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.runner }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: bazel-contrib/setup-bazel@0.19.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: build the deploy jar
+        run: bazel build //src/protoc_gen_clojure:protoc_gen_clojure_jvm_deploy.jar
+
+      # A musl-built libz.a, which is the thing issue #17 has been missing. Built in a
+      # scratch module so that registering musl toolchains cannot affect this repo.
+      #
+      # zlib rather than zlib-ng, deliberately: BCR's zlib overlay is
+      # `cc_library(name = "z")` behind a `zlib` alias, so the archive it produces is
+      # literally libz.a — the name native-image's `-lz` looks for. BCR's zlib-ng is
+      # built with `local_defines = ["ZLIB_COMPAT"]`, so it is a drop-in ABI and a
+      # legitimate fallback if zlib will not build under musl, but its archive is
+      # libzlib-ng.a and would have to be copied to libz.a first.
+      - name: build zlib against musl
+        id: zlib
+        run: |
+          set -euxo pipefail
+          work="$(mktemp -d)"
+          cd "$work"
+          cp "$GITHUB_WORKSPACE/.bazelversion" .
+          cat >MODULE.bazel <<'EOF'
+          module(name = "musl_zlib_probe", version = "0.0.0")
+
+          bazel_dep(name = "zlib", version = "1.3.2")
+          bazel_dep(name = "toolchains_musl", version = "0.1.27", dev_dependency = True)
+          EOF
+          touch BUILD.bazel
+          bazel build @zlib//:zlib
+          # Report every archive produced and what it actually links, rather than
+          # assuming the toolchain took effect. A glibc-built libz.a here is the whole
+          # failure mode of this experiment and must be visible, not inferred.
+          find "$(bazel info bazel-bin)" -name 'libz*.a' -print
+          # Exactly libz.a: native-image links -lz, so a differently named archive in
+          # CLibraryPath is invisible to it and the build fails with the same
+          # "libz:.a is missing" this issue opened with.
+          libz="$(find "$(bazel info bazel-bin)" -name 'libz.a' | head -1)"
+          if [ -z "$libz" ]; then
+            echo "::error::no libz.a produced; see the find output above" >&2
+            exit 1
+          fi
+          echo "libz=$libz" >>"$GITHUB_OUTPUT"
+          echo "dir=$(dirname "$libz")" >>"$GITHUB_OUTPUT"
+          file "$libz" || true
+          # A musl object has no GLIBC symbol versions. Cheap sanity check.
+          if nm "$libz" 2>/dev/null | grep -q GLIBC; then
+            echo "::warning::libz.a references GLIBC symbols — the musl toolchain may not have applied"
+          fi
+
+      - name: attempt the static native-image build
+        id: static
+        continue-on-error: true
+        run: |
+          set -uxo pipefail
+          ni="$(bazel cquery --output=files @graalvm//:bin-native-image 2>/dev/null | head -1)"
+          echo "native-image: $ni"
+          jar=bazel-bin/src/protoc_gen_clojure/protoc_gen_clojure_jvm_deploy.jar
+          "$ni" \
+            --static \
+            --libc=musl \
+            --no-fallback \
+            --initialize-at-build-time \
+            -H:+ReportExceptionStackTraces \
+            -H:CLibraryPath="${{ steps.zlib.outputs.dir }}" \
+            -jar "$jar" \
+            protoc-gen-clojure-static 2>&1 | tee /tmp/static.log
+          echo "exit=${PIPESTATUS[0]}" >>"$GITHUB_OUTPUT"
+
+      # Runs whether or not the build succeeded: the failure text IS the result when it
+      # fails, and issue #17 exists because that text was never captured on aarch64.
+      - name: what happened
+        if: always()
+        run: |
+          set +e
+          echo "=== static build outcome: ${{ steps.static.outcome }}"
+          if [ -x ./protoc-gen-clojure-static ]; then
+            echo "=== file:";  file ./protoc-gen-clojure-static
+            echo "=== ldd:";   ldd  ./protoc-gen-clojure-static 2>&1 | head -5
+            echo "=== glibc symbol versions (empty is the goal):"
+            objdump -T ./protoc-gen-clojure-static 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sort -u
+            echo "=== does it run?"; ./protoc-gen-clojure-static --version
+          else
+            echo "no binary produced; last 40 lines of the build log:"
+            tail -40 /tmp/static.log 2>/dev/null || echo "(no log)"
+          fi
