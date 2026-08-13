@@ -13,8 +13,9 @@
             [protoc-gen-clojure.plugin :as plugin])
   (:import [com.google.protobuf DescriptorProtos$Edition
             DescriptorProtos$DescriptorProto DescriptorProtos$FileDescriptorProto
-            DescriptorProtos$FileOptions
-            DescriptorProtos$MessageOptions DescriptorProtos$ServiceDescriptorProto]
+            DescriptorProtos$FeatureSet DescriptorProtos$FileOptions
+            DescriptorProtos$MessageOptions DescriptorProtos$ServiceDescriptorProto
+            UnknownFieldSet UnknownFieldSet$Field]
            [com.google.protobuf.compiler PluginProtos$CodeGeneratorRequest
             PluginProtos$CodeGeneratorResponse$Feature]))
 
@@ -192,27 +193,62 @@
 ;; ---------------------------------------------------------------------------
 ;; java class names for the prototype hint
 
+(defn- nest-in-file-class-features
+  "A FeatureSet carrying (pb.java).nest_in_file_class, built as protoc sends it: an
+  unknown extension field, because nothing here registers JavaFeaturesProto. See the
+  long note in plugin.clj for why the plugin reads it this way."
+  ^DescriptorProtos$FeatureSet [yes?]
+  (let [inner (-> (UnknownFieldSet/newBuilder)
+                  (.addField 5 (-> (UnknownFieldSet$Field/newBuilder)
+                                   (.addVarint (if yes? 2 1))
+                                   (.build)))
+                  (.build))
+        outer (-> (UnknownFieldSet/newBuilder)
+                  (.addField 1001 (-> (UnknownFieldSet$Field/newBuilder)
+                                      (.addLengthDelimited (.toByteString inner))
+                                      (.build)))
+                  (.build))]
+    (-> (DescriptorProtos$FeatureSet/newBuilder)
+        (.setUnknownFields outer)
+        (.build))))
+
 (defn- fdp
   "A FileDescriptorProto with just enough set to exercise the naming rules."
   ^DescriptorProtos$FileDescriptorProto
-  [{:keys [package java-package multiple-files? edition]}]
+  [{:keys [package java-package multiple-files? edition file-name nest-in-file-class]}]
   (let [opts (cond-> (DescriptorProtos$FileOptions/newBuilder)
                java-package    (.setJavaPackage java-package)
                multiple-files? (.setJavaMultipleFiles true)
+               (some? nest-in-file-class)
+               (.setFeatures (nest-in-file-class-features nest-in-file-class))
                :always         (.build))
         b    (cond-> (DescriptorProtos$FileDescriptorProto/newBuilder)
-               package (.setPackage package)
-               :always (.setOptions opts))]
+               package   (.setPackage package)
+               file-name (.setName file-name)
+               :always   (.setOptions opts))]
     (if edition
       (-> b (.setSyntax "editions") (.setEdition edition) (.build))
       (-> b (.setSyntax "proto3") (.build)))))
+
+(defn- msg-with-nest
+  "A DescriptorProto with (pb.java).nest_in_file_class set."
+  ^DescriptorProtos$DescriptorProto [name yes?]
+  (-> (DescriptorProtos$DescriptorProto/newBuilder)
+      (.setName name)
+      (.setOptions (-> (DescriptorProtos$MessageOptions/newBuilder)
+                       (.setFeatures (nest-in-file-class-features yes?))
+                       (.build)))
+      (.build)))
+
+(defn- plain-msg ^DescriptorProtos$DescriptorProto [name]
+  (-> (DescriptorProtos$DescriptorProto/newBuilder) (.setName name) (.build)))
 
 (deftest java-class-name-only-when-provable
   (testing "java_multiple_files puts every message at the top level"
     (is (= "com.acme.Tiny"
            (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"
                                            :multiple-files? true})
-                                     ["Tiny"]))))
+                                     (plain-msg "Tiny") ["Tiny"]))))
 
   (testing "edition 2024 does too, without java_multiple_files: nest_in_file_class
             defaults to NO, which is why bench/shapes.proto emits top-level classes
@@ -220,27 +256,120 @@
     (is (= "com.acme.Tiny"
            (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"
                                            :edition DescriptorProtos$Edition/EDITION_2024})
-                                     ["Tiny"]))))
+                                     (plain-msg "Tiny") ["Tiny"]))))
 
   (testing "no java_package falls back to the proto package"
     (is (= "acme.Tiny"
            (#'plugin/java-class-name (fdp {:package "acme" :multiple-files? true})
-                                     ["Tiny"]))))
+                                     (plain-msg "Tiny") ["Tiny"]))))
 
   (testing "NO hint for proto3 without java_multiple_files — the message is nested in
             the file class, whose name needs rules this deliberately does not
             implement. Emitting a guess here is what would produce wrong names."
     (is (nil? (#'plugin/java-class-name (fdp {:package "acme" :java-package "com.acme"})
-                                        ["Tiny"]))))
+                                        (plain-msg "Tiny") ["Tiny"]))))
 
   (testing "nor for edition 2023 without java_multiple_files, for the same reason"
     (is (nil? (#'plugin/java-class-name
                (fdp {:package "acme" :java-package "com.acme"
                      :edition DescriptorProtos$Edition/EDITION_2023})
-               ["Tiny"]))))
+               (plain-msg "Tiny") ["Tiny"]))))
 
   (testing "nor when there is no package at all to qualify the class with"
-    (is (nil? (#'plugin/java-class-name (fdp {:multiple-files? true}) ["Tiny"])))))
+    (is (nil? (#'plugin/java-class-name (fdp {:multiple-files? true})
+                                        (plain-msg "Tiny") ["Tiny"])))))
+
+(deftest nest-in-file-class-numbers-match-protobuf
+  (testing "the three wire constants plugin.clj hardcodes still match the real
+            generated classes. It reads the feature off unknown fields to keep
+            JavaFeaturesProto out of the native image, which means nothing else would
+            notice a renumbering — so this asserts it against protobuf itself.
+
+            Reached reflectively and only here: naming the class at compile time is
+            exactly what plugin.clj must avoid, and a test may pay a cost the plugin
+            cannot."
+    ;; Build a descriptor first: initialising JavaFeaturesProto before protobuf's
+    ;; edition-defaults cache is warm re-enters ExtensionRegistry.add and throws.
+    @plugin/max-supported-edition
+    (let [enum-cls (Class/forName
+                    (str "com.google.protobuf.JavaFeaturesProto$JavaFeatures"
+                         "$NestInFileClassFeature$NestInFileClass"))
+          enum-num (fn [n] (.getNumber ^com.google.protobuf.ProtocolMessageEnum
+                                       (clojure.lang.Reflector/invokeStaticMethod
+                                        enum-cls "valueOf" (into-array Object [n]))))
+          jf-desc  (clojure.lang.Reflector/invokeStaticMethod
+                    (Class/forName "com.google.protobuf.JavaFeaturesProto$JavaFeatures")
+                    "getDescriptor" (into-array Object []))
+          ext      (clojure.lang.Reflector/getStaticField
+                    "com.google.protobuf.JavaFeaturesProto" "java_")]
+      (is (= @#'plugin/pb-java-extension-field
+             (.getNumber (.getDescriptor
+                          ^com.google.protobuf.GeneratedMessage$GeneratedExtension ext)))
+          "(pb.java) extension field number moved")
+      (is (= @#'plugin/nest-in-file-class-field
+             (.getNumber (.findFieldByName ^com.google.protobuf.Descriptors$Descriptor jf-desc
+                                           "nest_in_file_class")))
+          "nest_in_file_class field number moved")
+      (is (= {(enum-num "YES") :yes, (enum-num "NO") :no}
+             @#'plugin/nest-in-file-class-values)
+          "nest_in_file_class enum numbers moved"))))
+
+(deftest nest-in-file-class-moves-the-message-inside-the-file-class
+  (testing "a message setting nest_in_file_class = YES is spelled
+            <pkg>.<FileClass>$<Message>, because that is where protobuf's Java
+            plugin puts it. Emitting the top-level name instead is a name that
+            does not exist, and rt/message then keeps its DynamicMessage."
+    (is (= "com.acme.KitchenProto$NestedInFileClass"
+           (#'plugin/java-class-name
+            (fdp {:package "acme" :java-package "com.acme" :file-name "fixtures/kitchen.proto"
+                  :edition DescriptorProtos$Edition/EDITION_2024})
+            (msg-with-nest "NestedInFileClass" true)
+            ["NestedInFileClass"]))))
+
+  (testing "set on the FILE, every message in it nests"
+    (is (= "com.acme.ShapesProto$Tiny"
+           (#'plugin/java-class-name
+            (fdp {:package "acme" :java-package "com.acme" :file-name "fixtures/bench/shapes.proto"
+                  :edition DescriptorProtos$Edition/EDITION_2024
+                  :nest-in-file-class true})
+            (plain-msg "Tiny") ["Tiny"]))))
+
+  (testing "a message setting NO overrides a file setting YES"
+    (is (= "com.acme.Tiny"
+           (#'plugin/java-class-name
+            (fdp {:package "acme" :java-package "com.acme" :file-name "shapes.proto"
+                  :edition DescriptorProtos$Edition/EDITION_2024
+                  :nest-in-file-class true})
+            (msg-with-nest "Tiny" false) ["Tiny"]))))
+
+  (testing "nesting inside a message composes with nesting inside the file class"
+    (is (= "com.acme.KitchenProto$Outer$Inner"
+           (#'plugin/java-class-name
+            (fdp {:package "acme" :java-package "com.acme" :file-name "kitchen.proto"
+                  :edition DescriptorProtos$Edition/EDITION_2024
+                  :nest-in-file-class true})
+            (plain-msg "Inner") ["Outer" "Inner"]))))
+
+  (testing "java_outer_classname wins over the derived name"
+    (is (= "com.acme.Custom$Tiny"
+           (#'plugin/java-class-name
+            (-> (fdp {:package "acme" :java-package "com.acme" :file-name "shapes.proto"
+                      :edition DescriptorProtos$Edition/EDITION_2024})
+                (.toBuilder)
+                (as-> b (.setOptions b (-> (.getOptions (.build b)) (.toBuilder)
+                                           (.setJavaOuterClassname "Custom") (.build))))
+                (.build))
+            (msg-with-nest "Tiny" true) ["Tiny"]))))
+
+  (testing "the derived file class is the camel-cased basename plus Proto, which is
+            the edition 2024 default — shapes.proto -> ShapesProto even though no
+            type is named Shapes, and underscores fold into camel case"
+    (is (= "ShapesProto" (#'plugin/file-class-name
+                          (fdp {:file-name "fixtures/bench/shapes.proto"
+                                :edition DescriptorProtos$Edition/EDITION_2024}))))
+    (is (= "LegacyStyleProto" (#'plugin/file-class-name
+                               (fdp {:file-name "a/legacy_style.proto"
+                                     :edition DescriptorProtos$Edition/EDITION_2024}))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the message tree

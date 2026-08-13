@@ -137,7 +137,7 @@
     )))
 
 (defrecord NestedInFileClass [id])
-(def NestedInFileClass-prototype (rt/message file-descriptor "NestedInFileClass" "com.acme.fixtures.e2024.NestedInFileClass"))
+(def NestedInFileClass-prototype (rt/message file-descriptor "NestedInFileClass" "com.acme.fixtures.e2024.KitchenProto$NestedInFileClass"))
 (def ^:private NestedInFileClass--id (rt/field NestedInFileClass-prototype "id"))
 (defn NestedInFileClass->proto
   "Clojure -> protobuf. Takes the NestedInFileClass record or any map
