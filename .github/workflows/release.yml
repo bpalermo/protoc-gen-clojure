@@ -230,6 +230,29 @@ jobs:
               ;;
           esac
 
+          # linux_x86_64 must be STATIC, asserted rather than assumed.
+          #
+          # Without this, losing the static build is invisible: the binary still works,
+          # still passes every other check, and the floor assertion above reports 2.34
+          # and passes — so the release would quietly go back to excluding debian11,
+          # Alpine and scratch, and the first person to know would be a user.
+          #
+          # Reachable by more than one route: --//bazel:static_musl=true failing to
+          # match its config_setting, the musl step being skipped or renamed, or a
+          # Bazel change to how bool_flag values are parsed. All of them fail here
+          # instead, loudly, on the leg that is supposed to be static.
+          if [ "${{ matrix.os_arch }}" = "linux_x86_64" ]; then
+            if ! file "$out" | grep -q "statically linked"; then
+              echo "::error::linux_x86_64 is not statically linked. The musl toolchain step or --//bazel:static_musl=true did not take effect; $(file "$out")" >&2
+              exit 1
+            fi
+            if [ -n "$floor" ]; then
+              echo "::error::linux_x86_64 is static yet carries glibc symbols (floor $floor). Something linked against glibc anyway." >&2
+              exit 1
+            fi
+            echo "linux_x86_64: statically linked, no libc dependency"
+          fi
+
       - name: it runs, and reports the release version
         env:
           TAG: ${{ inputs.tag_name || github.ref_name }}
