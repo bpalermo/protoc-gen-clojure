@@ -17,19 +17,26 @@ concurrency:
 
 jobs:
   bazel:
-    name: bazel (jdk ${{ matrix.jdk }})
+    name: bazel ${{ matrix.bazel }} (jdk ${{ matrix.jdk }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        bazel: ["8.6.0", "9.2.0"]
         jdk: ["21", "25"]
+    env:
+      # Takes precedence over .bazelversion, so one checkout covers both majors.
+      # 8.x is not decoration: the BCR entry claims it, and a registry entry that
+      # claims more than CI covers is a claim nobody is checking.
+      USE_BAZEL_VERSION: ${{ matrix.bazel }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}
+          # Keyed by Bazel version: the two majors must not share an output cache.
+          disk-cache: ${{ github.workflow }}-${{ matrix.bazel }}
           repository-cache: true
           # Pull requests RESTORE caches but never SAVE them, so only code that
           # has been merged — and therefore reviewed — can populate a cache that a
@@ -69,3 +76,34 @@ jobs:
           bazel test //... --test_output=errors \
             --java_runtime_version=remotejdk_${{ matrix.jdk }} \
             --java_language_version=${{ matrix.jdk }}
+
+  # The single check branch protection requires, and the only reason this job exists.
+  #
+  # A required status check is matched by CHECK RUN name, which for a matrix is the
+  # generated one — "bazel 9.2.0 (jdk 21)" and its siblings — not the workflow's
+  # name. Requiring those directly works until the matrix changes: bump a version
+  # and the required check can never report again, so every pull request is blocked
+  # by something that will never turn green. Requiring one aggregate instead leaves
+  # the matrix free to change.
+  #
+  # if: always() so it runs even when a leg fails — a skipped job reports nothing,
+  # and a required check that never reports blocks the pull request instead of
+  # failing it.
+  ci:
+    name: ci
+    needs: [bazel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Reads the results rather than naming the jobs, so adding a job to `needs`
+      # above is enough to have it gate merges.
+      - name: every job this depends on must have succeeded
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "results: ${results}"
+          for result in ${results}; do
+            if [ "${result}" != "success" ]; then
+              echo "::error::a required job reported '${result}'" >&2
+              exit 1
+            fi
+          done

@@ -80,9 +80,10 @@ echo "    public API package: //$api_pkg"
 
 mkdir -p consumer/example
 cd consumer
-# Pin the same Bazel this repo pins. The module declares 9.x only, and letting
-# bazelisk pick "latest" would make the check fail for a reason that has nothing to do
-# with the toolchain the day Bazel 10 ships.
+# Pin the same Bazel this repo pins locally. The module supports 8.x and 9.x, and
+# letting bazelisk pick "latest" would make the check fail for a reason that has
+# nothing to do with the toolchain the day Bazel 10 ships. USE_BAZEL_VERSION still
+# overrides, which is how the check runs against the other supported major.
 if [[ -f "$repo_root/.bazelversion" ]]; then
   cp "$repo_root/.bazelversion" .bazelversion
   echo "    bazel $(cat .bazelversion)"
