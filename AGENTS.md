@@ -134,13 +134,16 @@ edition 2024's `import option java_features.proto` (protobuf exports it in no
 filegroup), so we use `--descriptor_set_in` with the *transitive* descriptor
 sets — and those are only available via `ProtoInfo`, which a genrule can't see.
 
-**Bazel is pinned by `.bazelversion` (9.2.0).** Both bazelisk and CI's
-setup-bazel read it. Unpinned, a Bazel 10 release would silently change the build
-of a repo whose dependency story is Bazel-9-specific.
+**Bazel 8 and 9 are both supported; `.bazelversion` (9.2.0) is the local dev
+default.** CI overrides it per matrix leg with `USE_BAZEL_VERSION` (8.6.0 and
+9.2.0), and `.bcr/presubmit.yml` claims the same `8.x`/`9.x` range — the entry
+must never claim more than CI covers. Unpinned, a Bazel 10 release would
+silently change local builds, so the pin stays.
 
 **Bazel 9 removed `ProtoInfo`, `JavaInfo` and `CcInfo` from the Starlark
 globals.** Load them from their modules (`@protobuf//bazel/common:proto_info.bzl`
-etc.). `.bazelrc` also pins `--tool_java_language_version=21`: rules_clj
+etc.); those load paths resolve identically on Bazel 8, which is what lets one
+code path serve both majors. `.bazelrc` also pins `--tool_java_language_version=21`: rules_clj
 targets Java 21 throughout, its persistent compile worker included.
 
 ## Naming conventions in generated code

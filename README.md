@@ -178,8 +178,10 @@ options are about naming, not about dependency weight.
 
 ## Development
 
-Bazel is pinned by `.bazelversion` (9.2.0). It is not incidental: the rules load
-`ProtoInfo` from `@protobuf` because Bazel 9 removed it from the Starlark globals.
+Bazel 8 and 9 are both supported — CI runs 8.6.0 and 9.2.0, and the BCR entry is
+tested on both. `.bazelversion` (9.2.0) sets the local development default. The
+rules load `ProtoInfo` from `@protobuf` — Bazel 9 removed it from the Starlark
+globals, and the module load path works identically on 8.
 
 
 ```sh

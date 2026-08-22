@@ -16,8 +16,9 @@
 # every consumer's `load` and `use_extension` lines change.
 #
 # No compatibility_level: Bazel 9.2 reports it as a no-op slated for removal
-# ("The attribute 'compatibility_level' in module() is a no-op"), and this module
-# is Bazel 9 only, so declaring it buys nothing but a warning.
+# ("The attribute 'compatibility_level' in module() is a no-op"), so declaring it
+# buys nothing but a warning. No bazel_compatibility either: the BCR presubmit
+# matrix (8.x and 9.x, mirrored by CI) is the real compatibility claim.
 module(
     name = "protoc_gen_clojure",
     version = "0.3.0",

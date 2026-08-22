@@ -1,0 +1,8 @@
+# Bazel's convenience symlinks. They point into one version's output base, and
+# switching Bazel versions in the same checkout (CI covers 8.6.0 and 9.2.0)
+# leaves the new version walking the old tree, where it dies on whatever
+# external repo it finds first.
+bazel-bin
+bazel-out
+bazel-protoc-gen-clojure
+bazel-testlogs
