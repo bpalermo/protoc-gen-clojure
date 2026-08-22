@@ -1,5 +1,6 @@
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_library.bzl", "sh_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//bazel/lint:linters.bzl", "shellcheck_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -22,6 +23,28 @@ sh_library(
     srcs = ["workspace_status.sh"],
 )
 
+# Every declared or documented version must equal MODULE.bazel's. The README
+# snippets ship in the module archive and are checkable by nothing else: the
+# release workflow's version gate reads plugin.clj and MODULE.bazel but not
+# docs, which is how the 0.3.1 bump initially shipped install snippets still
+# pointing at 0.3.0.
+sh_test(
+    name = "version_consistency_test",
+    srcs = ["version_consistency_test.sh"],
+    args = [
+        "$(rootpath //:MODULE.bazel)",
+        "$(rootpath //src/protoc_gen_clojure:plugin.clj)",
+        "$(rootpath //:README.md)",
+        "$(rootpath //examples/bzlmod:MODULE.bazel)",
+    ],
+    data = [
+        "//:MODULE.bazel",
+        "//:README.md",
+        "//examples/bzlmod:MODULE.bazel",
+        "//src/protoc_gen_clojure:plugin.clj",
+    ],
+)
+
 shellcheck_test(
     name = "workspace_status_lint",
     srcs = [":workspace_status"],
@@ -31,5 +54,11 @@ shellcheck_test(
 shellcheck_test(
     name = "pin_versions_lint",
     srcs = [":pin_versions"],
+    tags = ["lint"],
+)
+
+shellcheck_test(
+    name = "version_consistency_lint",
+    srcs = [":version_consistency_test"],
     tags = ["lint"],
 )
