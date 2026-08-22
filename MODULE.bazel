@@ -115,7 +115,10 @@ native_toolchains = use_extension(
 native_toolchains.graalvm(version = "21.0.2")
 use_repo(native_toolchains, "graalvm")
 
-register_toolchains("@graalvm//:toolchain", dev_dependency = True)
+register_toolchains(
+    "@graalvm//:toolchain",
+    dev_dependency = True,
+)
 
 # rules_clj: the Clojure ruleset this project builds with. Still a dev_dependency —
 # a consumer gets the prebuilt native binary and needs no Clojure at all — and still
