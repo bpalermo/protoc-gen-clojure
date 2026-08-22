@@ -1,5 +1,5 @@
 # The BCR test module, and the proof of the consumption story: this module has
-# NO rules_clojure, NO JVM toolchain and NO GraalVM, yet it generates Clojure
+# NO rules_clj, NO JVM toolchain and NO GraalVM, yet it generates Clojure
 # from a .proto. It gets there through the prebuilt native binary that
 # protoc_gen_clojure's toolchain extension fetches.
 module(
