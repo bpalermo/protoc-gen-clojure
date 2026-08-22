@@ -87,13 +87,12 @@ bazel_dep(name = "rules_buf", version = "0.5.4", dev_dependency = True)
 
 # Lint, wired as ordinary Bazel tests (see bazel/lint/linters.bzl), so CI needs no
 # separate lint job and `bazel test //...` covers protos and shell.
-# Version matches nubank/park, which already runs this setup.
 bazel_dep(name = "aspect_rules_lint", version = "2.7.2", dev_dependency = True)
 
 # buildifier, for Starlark. Reachable through the FORMAT path (//bazel/dev:format,
 # //bazel/dev:format_test) but not through a lint_test: the lint aspect looks for the
 # binary in runfiles, where the buildifier_prebuilt extension's repos are not
-# visible. nubank/park does the same — it wires buildifier into format only.
+# visible. Wiring buildifier into format only is the usual way around it.
 bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3", dev_dependency = True)
 
 buf = use_extension("@rules_buf//buf:extensions.bzl", "buf", dev_dependency = True)
