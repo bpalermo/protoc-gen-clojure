@@ -1,5 +1,5 @@
 load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
-load("@rules_clojure//:rules.bzl", "clojure_test")
+load("@rules_clj//clojure:defs.bzl", "clj_test")
 load("@rules_java//java:defs.bzl", "java_library")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_library.bzl", "sh_library")
@@ -15,10 +15,9 @@ java_library(
     runtime_deps = ["//src/protoc_gen_clojure:plugin"],
 )
 
-clojure_test(
+clj_test(
     name = "plugin_test",
-    resource_strip_prefix = "test",
-    test_ns = "plugin-test",
+    ns = "plugin-test",
     runtime_deps = [":libplugin_test"],
 )
 
@@ -30,7 +29,7 @@ sh_test(
 )
 
 # The distribution test, now a real Bazel test: the native binary is a graph
-# artifact (//bazel:native_image.bzl), and protoc and buf come from the graph too,
+# artifact (clj_native_binary from rules_clj), and protoc and buf come from the graph too,
 # so nothing depends on what happens to be installed.
 #
 # It still runs the binary in a scratch directory with only itself on PATH, which
