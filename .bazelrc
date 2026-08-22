@@ -4,10 +4,9 @@ common --enable_bzlmod
 build --java_language_version=21
 build --java_runtime_version=remotejdk_21
 
-# JDK for build TOOLS — including rules_clojure's persistent worker. Without
-# this the worker runs on Bazel's default tool JDK and fails compiling
-# rules_clojure/fs.clj with ClassNotFoundException java.util.HexFormat
-# (added in Java 17).
+# JDK for build TOOLS — including rules_clj's persistent compile worker.
+# rules_clj targets Java 21 throughout, so the workers must not run on an
+# older default tool JDK.
 build --tool_java_language_version=21
 build --tool_java_runtime_version=remotejdk_21
 

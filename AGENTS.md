@@ -17,7 +17,6 @@ generate a `.clj` file.
 | `clojure/toolchain.bzl` | `protoc_gen_clojure_toolchain` — carries the plugin executable. |
 | `clojure/extensions.bzl` | Module extension that downloads the prebuilt release binaries. |
 | `clojure/versions.bzl` | Release checksums. **Empty in git on purpose** (see below). |
-| `bazel/native_image.bzl` | Our own native-image rule; see below for why not rules_graalvm's. |
 | `bazel/lint/linters.bzl` | buf and shellcheck aspects, wired as `lint_test` targets. |
 | `bazel/tools/pin_versions.sh` | `bazel run //bazel/tools:pin_versions` — writes release checksums. |
 | `test/plugin_test.clj` | Unit tests for the protocol and the emitter. |
@@ -104,25 +103,30 @@ depend on a *released* version. From a git checkout, pass
 attr instead of relying on the toolchain — which is exactly what
 `//test/proto:generated` does.
 
-**The native binary is built by `//bazel:native_image.bzl`, a rule of our own —
-not by `rules_graalvm`.** Its `native_image` rule crashes Bazel on macOS:
-it routes through `apple_support.run`, which puts `SDKROOT` in the action env,
-and Bazel's own `XcodeLocalEnvProvider` then injects `SDKROOT` again — "Multiple
-entries with same key: SDKROOT". Not fixable from here.
+**The native binary is built by rules_clj's `clj_native_binary` — not by
+`rules_graalvm`, and no longer by a local rule.** rules_graalvm's `native_image`
+rule crashes Bazel on macOS: it routes through `apple_support.run`, which puts
+`SDKROOT` in the action env, and Bazel's own `XcodeLocalEnvProvider` then
+injects `SDKROOT` again — "Multiple entries with same key: SDKROOT". This repo
+used to carry its own rule to dodge that; rules_clj has the same
+no-apple_support design, so the problem is solved once in the ruleset and the
+local rule is gone, along with the rules_graalvm dependency.
 
-rules_graalvm is still a dependency, but only to fetch a pinned GraalVM SDK —
-never for its rules. Our rule runs the action `local` and unsandboxed with the
-ambient environment, because native-image shells out to the platform linker
-(clang/ld on macOS, gcc on Linux) and Bazel's scrubbed env leaves it unable to
-find one. That compromise is deliberate and documented in the rule itself.
+The GraalVM SDK comes from rules_clj's `native_toolchains` extension, pinned in
+`MODULE.bazel` and registered as its own toolchain type — separate from the
+Java toolchain, so a build that makes no native binary downloads nothing. The
+image action still runs `local` and unsandboxed with the ambient environment,
+because native-image shells out to the platform linker (clang/ld on macOS, gcc
+on Linux) and Bazel's scrubbed env leaves it unable to find one. That
+compromise is deliberate and documented in the rule.
 
-**`rules_clojure`, `rules_jvm_external`, `rules_java` and `rules_shell` are
+**`rules_clj`, `rules_jvm_external`, `rules_java` and `rules_shell` are
 `dev_dependency = True`, and that is not cosmetic.** A published module's non-dev
-deps must all resolve from BCR, and `rules_clojure` currently needs a
-`git_override` for its Bazel 9 compat patches (griffinbank#108). `git_override`
-is honoured only in the root module, so making them dev deps is what keeps the
-module publishable *and* buildable here. Consumers use the prebuilt binary and
-need none of them. Don't promote them.
+deps must all resolve from BCR, and `rules_clj` needs a `git_override` until its
+`0.1.0` entry lands there. `git_override` is honoured only in the root module,
+so making them dev deps is what keeps the module publishable *and* buildable
+here. Consumers use the prebuilt binary and need none of them. Don't promote
+them.
 
 **`clojure_proto_library` is a real rule, not a genrule, on purpose.** protoc
 needs every transitive proto dependency resolvable. `--proto_path` can't reach
@@ -136,8 +140,8 @@ of a repo whose dependency story is Bazel-9-specific.
 
 **Bazel 9 removed `ProtoInfo`, `JavaInfo` and `CcInfo` from the Starlark
 globals.** Load them from their modules (`@protobuf//bazel/common:proto_info.bzl`
-etc.). `.bazelrc` also pins `--tool_java_language_version=21`, without which
-`rules_clojure`'s persistent worker fails on `java.util.HexFormat`.
+etc.). `.bazelrc` also pins `--tool_java_language_version=21`: rules_clj
+targets Java 21 throughout, its persistent compile worker included.
 
 ## Naming conventions in generated code
 

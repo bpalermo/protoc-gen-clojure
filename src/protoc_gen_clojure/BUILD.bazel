@@ -1,31 +1,30 @@
-load("@rules_clojure//:rules.bzl", "clojure_binary", "clojure_library")
-load("//bazel:native_image.bzl", "native_image")
+load("@rules_clj//clojure:defs.bzl", "clj_binary", "clj_library", "clj_native_binary")
 
 package(default_visibility = ["//visibility:public"])
 
 # For //test:sandbox_conformance_test, which greps the source.
 exports_files(["plugin.clj"])
 
-# AOT matters here beyond startup time: native_image consumes compiled classes.
-clojure_library(
+# AOT matters here beyond startup time: a native image has no Clojure compiler in
+# it, so anything that would be loaded from source at runtime cannot exist.
+# clj_library compiles by default; `namespaces` is what gets compiled.
+clj_library(
     name = "plugin",
     srcs = ["plugin.clj"],
-    aot = ["protoc-gen-clojure.plugin"],
-    resource_strip_prefix = "src",
+    namespaces = ["protoc-gen-clojure.plugin"],
+    strip_prefix = "src",
     deps = [
         "@maven//:com_google_protobuf_protobuf_java",
         "@maven//:org_clojure_clojure",
     ],
 )
 
-# The JVM plugin. protoc only requires something that reads a
-# CodeGeneratorRequest on stdin and writes the response to stdout, so a launcher
-# script qualifies — but it needs a JVM on the user's machine, which no other
-# protoc plugin does. So the native binary is what ships; this is what the tests
-# generate with, and it is also the input to native-image via its _deploy.jar.
-#
-# The native binary IS built by Bazel: see :protoc_gen_clojure below.
-clojure_binary(
+# The JVM plugin. protoc only requires something that reads a CodeGeneratorRequest
+# on stdin and writes the response to stdout, so a launcher script qualifies — but
+# it needs a JVM on the user's machine, which no other protoc plugin does. So the
+# native binary is what ships; this is what the tests generate with, and it is also
+# the input to native-image via its _deploy.jar.
+clj_binary(
     name = "protoc_gen_clojure_jvm",
     main_class = "protoc_gen_clojure.plugin",
     deps = [
@@ -35,15 +34,16 @@ clojure_binary(
     ],
 )
 
-# The shipped artifact. See //bazel:native_image.bzl for why this is a local,
-# unsandboxed action rather than rules_graalvm's rule.
+# The shipped artifact.
 #
-native_image(
+# --no-fallback and --initialize-at-build-time are not listed here any more: the rule
+# forces both. The first because an image whose analysis did not close otherwise
+# bundles a JVM and starts as slowly as the thing it was meant to replace; the second
+# because Clojure's namespaces are built by static initialisers.
+clj_native_binary(
     name = "protoc_gen_clojure",
     binary_name = "protoc-gen-clojure",
     extra_args = [
-        "--no-fallback",
-        "--initialize-at-build-time",
         "-H:+ReportExceptionStackTraces",
     ] + select({
         # Off unless --//bazel:static_musl=true. See //bazel:BUILD.bazel for why it is

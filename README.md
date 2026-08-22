@@ -179,8 +179,7 @@ options are about naming, not about dependency weight.
 ## Development
 
 Bazel is pinned by `.bazelversion` (9.2.0). It is not incidental: the rules load
-`ProtoInfo` from `@protobuf` because Bazel 9 removed it from the Starlark globals,
-and `rules_clojure` is a fork carrying Bazel 9 compatibility patches.
+`ProtoInfo` from `@protobuf` because Bazel 9 removed it from the Starlark globals.
 
 
 ```sh
@@ -222,12 +221,12 @@ real RPCs, stays byte-identical to protoc's Java backend — is asserted by the
 runtime library the generated code requires, which owns those tests. That is what
 lets this module depend on nothing but `protobuf-java`.
 
-The native binary is built by `//bazel:native_image.bzl`, a small rule of our own
-rather than rules_graalvm's — whose rule crashes Bazel on macOS by setting
-`SDKROOT` twice (once itself via `apple_support`, once via Bazel's own Xcode env
-provider). The rule is honest about its one compromise: the action is local and
-unsandboxed with the ambient environment, because native-image shells out to the
-platform linker.
+The native binary is built by rules_clj's `clj_native_binary` rather than
+rules_graalvm's rule — which crashes Bazel on macOS by setting `SDKROOT` twice
+(once itself via `apple_support`, once via Bazel's own Xcode env provider). The
+rule is honest about its one compromise: the action is local and unsandboxed
+with the ambient environment, because native-image shells out to the platform
+linker.
 
 Windows binaries are not built yet.
 
