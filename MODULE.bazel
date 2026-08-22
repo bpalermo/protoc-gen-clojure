@@ -21,7 +21,7 @@
 # matrix (8.x and 9.x, mirrored by CI) is the real compatibility claim.
 module(
     name = "protoc_gen_clojure",
-    version = "0.3.0",
+    version = "0.3.1",
 )
 
 bazel_dep(name = "platforms", version = "1.1.0")

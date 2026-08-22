@@ -2,6 +2,10 @@ load("@protobuf//bazel:proto_library.bzl", "proto_library")
 load("@protoc_gen_clojure//clojure:defs.bzl", "clojure_proto_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
+# For //test:version_consistency_test, which asserts the pin below tracks the
+# version MODULE.bazel declares.
+exports_files(["MODULE.bazel"])
+
 proto_library(
     name = "hello_proto",
     srcs = ["example/hello.proto"],
