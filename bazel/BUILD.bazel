@@ -1,13 +1,12 @@
 # Development-only Bazel tooling. Nothing here ships in the module archive.
 #
-# The package exists so //bazel:native_image.bzl is a loadable label; the public
+# The package exists so the static_musl flag below is a loadable label; the public
 # ruleset lives in //clojure, per https://bazel.build/rules/deploying.
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["native_image.bzl"])
 
 # Opt-in fully static Linux binaries.
 #

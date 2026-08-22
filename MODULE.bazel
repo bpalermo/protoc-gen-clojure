@@ -5,10 +5,9 @@
 # everything needed to BUILD it from Clojure source is a dev_dependency.
 #
 # A consumer uses the prebuilt native binary (see clojure/extensions.bzl), so it
-# never needs rules_clojure, a JVM toolchain, or GraalVM to generate one .clj
-# file. That also sidesteps a hard BCR constraint: a published module's non-dev
-# deps must all resolve from BCR, and rules_clojure currently needs a Bazel 9
-# compatibility patch that is still in review upstream (griffinbank#108). As a
+# never needs rules_clj, a JVM toolchain, or GraalVM to generate one .clj file.
+# That also sidesteps a hard BCR constraint: a published module's non-dev deps
+# must all resolve from BCR, and rules_clj is not published there yet. As a
 # dev_dependency it is ignored entirely when this module is consumed, and the
 # git_override below only applies when this module is the root — exactly the
 # semantics we want.
@@ -99,46 +98,37 @@ buf = use_extension("@rules_buf//buf:extensions.bzl", "buf", dev_dependency = Tr
 buf.toolchains(version = "v1.72.0")
 use_repo(buf, "rules_buf_toolchains")
 
-# GraalVM, for the SDK ONLY — deliberately not for its native_image rule.
+# GraalVM comes from rules_clj, which fetches a pinned SDK and registers it as a
+# toolchain of its own — separate from the Java toolchain, so a build that makes no
+# native binary downloads nothing.
 #
-# The distinction is the whole point. Fetching a pinned GraalVM through
-# rules_graalvm is exactly what we want: hermetic, version-pinned, and it drops
-# graalvm/setup-graalvm (and its GitHub token) from CI. Its native_image RULE is
-# what cannot be used: on macOS it routes through apple_support.run, which puts
-# SDKROOT in the action env, and Bazel's XcodeLocalEnvProvider then injects
-# SDKROOT again — "Multiple entries with same key: SDKROOT", which crashes Bazel
-# outright. So //bazel:native_image.bzl invokes @graalvm//:native-image itself.
-#
-# No register_toolchains here on purpose: we want the SDK on disk, not GraalVM
-# substituted as the build's Java toolchain.
-#
-# BCR's newest rules_graalvm is 0.11.1 (January 2024) and fails on Bazel 9 with
-# "name 'JavaInfo' is not defined", hence the override. It is dev-only, so it
-# never reaches a consumer or blocks BCR publication.
-bazel_dep(name = "rules_graalvm", version = "0.12.0", dev_dependency = True)
-git_override(
-    module_name = "rules_graalvm",
-    remote = "https://github.com/sgammon/rules_graalvm.git",
-    tag = "v0.12.0",
+# This replaces a rules_graalvm dependency that had to be git_override'd because its
+# newest BCR release does not load on Bazel 9, plus a local native_image rule that
+# existed because rules_graalvm's own rule routes through apple_support and crashes
+# Bazel on macOS with "Multiple entries with same key: SDKROOT". Both problems are
+# now rules_clj's, solved once, in one place.
+native_toolchains = use_extension(
+    "@rules_clj//clojure:extensions.bzl",
+    "native_toolchains",
+    dev_dependency = True,
 )
+native_toolchains.graalvm(version = "21.0.2")
+use_repo(native_toolchains, "graalvm")
 
-graalvm = use_extension("@rules_graalvm//:extensions.bzl", "graalvm", dev_dependency = True)
-graalvm.graalvm(
-    name = "graalvm",
-    distribution = "ce",
-    java_version = "21",
-    version = "21.0.2",
-)
-use_repo(graalvm, "graalvm")
+register_toolchains("@graalvm//:toolchain", dev_dependency = True)
 
-# The Bazel 9 compatibility patches live on a personal fork pending
-# griffinbank/rules_clojure#108. git_override is honoured only in the root
-# module, which is precisely why rules_clojure must be a dev_dependency.
-bazel_dep(name = "rules_clojure", version = "0.5", dev_dependency = True)
+# rules_clj: the Clojure ruleset this project builds with. Still a dev_dependency —
+# a consumer gets the prebuilt native binary and needs no Clojure at all — and still
+# overridden, because rules_clj is not in the BCR yet.
+#
+# DELETE THE OVERRIDE once it is accepted there. That is the whole point of the
+# version being pinned below: the day the registry has 0.1.0, removing these four
+# lines is the entire change.
+bazel_dep(name = "rules_clj", version = "0.1.0", dev_dependency = True)
 git_override(
-    module_name = "rules_clojure",
-    branch = "bazel-9-compat",
-    remote = "https://github.com/bpalermo/rules_clojure.git",
+    module_name = "rules_clj",
+    branch = "main",
+    remote = "https://github.com/bpalermo/rules_clj.git",
 )
 
 maven = use_extension(
