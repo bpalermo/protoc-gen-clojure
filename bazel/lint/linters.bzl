@@ -1,8 +1,7 @@
 """Lint aspects, exposed as ordinary Bazel tests.
 
 Wiring lint as `lint_test` targets rather than as an `aspect lint` invocation
-means `bazel test //...` covers it and CI needs no separate lint job — the same
-arrangement nubank/park uses.
+means `bazel test //...` covers it and CI needs no separate lint job.
 
 Three linters, one per language actually present here:
 
@@ -33,6 +32,5 @@ shellcheck_test = lint_test(aspect = shellcheck)
 # No buildifier aspect, deliberately. Its binaries live in repos internal to the
 # buildifier_prebuilt module, so a lint_test cannot reach them in runfiles — it
 # fails with a bare "Unable to locate buildifier runfile", and re-exporting the
-# extension repos does not help. nubank/park defines the aspect but only ever
-# instantiates buf_test, so this is unproven there too. Revisit if buildifier
-# starts exporting its binaries, or run it outside Bazel.
+# extension repos does not help. Revisit if buildifier starts exporting its
+# binaries, or run it outside Bazel.
