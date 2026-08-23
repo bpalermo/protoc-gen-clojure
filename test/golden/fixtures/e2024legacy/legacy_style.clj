@@ -4,8 +4,8 @@
 ;; its edition features at load time, so this file needs no regeneration when
 ;; a new edition ships.
 (ns fixtures.e2024legacy.legacy-style
-  (:require [clj-grpc.codec :as codec]
-            [clj-grpc.runtime :as rt]))
+  (:require [clj-protobuf.codec :as codec]
+            [clj-protobuf.runtime :as rt]))
 
 (def ^:private descriptor-b64
   "CidmaXh0dXJlcy9lMjAyNGxlZ2FjeS9sZWdhY3lfc3R5bGUucHJvdG8SFGZpeHR1cmVzLmUyMDI0bGVnYWN5Ir0BChJsZWdhY3lTdHlsZU1lc3NhZ2USJgoOY2FtZWxDYXNlRmllbGQYASABKAlSDmNhbWVsQ2FzZUZpZWxkEioKEVVQUEVSX1NOQUtFX0ZJRUxEGAIgASgJUg9VUFBFUlNOQUtFRklFTEQSIwoNYWxyZWFkeV9zbmFrZRgDIAEoCVIMYWxyZWFkeVNuYWtlEgwKAXgYBCABKAlSAXgSIAoLaHR0cDJTZXJ2ZXIYBSABKAlSC2h0dHAyU2VydmVyQiIKHWNvbS5hY21lLmZpeHR1cmVzLmUyMDI0bGVnYWN5kgMAYghlZGl0aW9uc3DpBw==")

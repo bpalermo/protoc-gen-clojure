@@ -151,16 +151,16 @@ targets Java 21 throughout, its persistent compile worker included.
 - `acme/greeter/greeter.proto` → namespace `acme.greeter.greeter`, file
   `acme/greeter/greeter.clj`. Underscores in path segments become hyphens in the
   namespace; Clojure's own munging puts them back on disk.
-- Field names are kebab-cased to match `clj-grpc.codec`'s `:kebab` default, so
+- Field names are kebab-cased to match `clj-protobuf.codec`'s `:kebab` default, so
   generated records and plain maps stay interchangeable.
-- `clj-grpc.runtime.service` is required only when the file actually declares a
+- `clj-grpc.service` is required only when the file actually declares a
   service — otherwise a message-only file would drag grpc-java onto the
   classpath of a project that never asked for RPC.
 
 ## Why the namespace is `protoc-gen-clojure.plugin`
 
 The generator is named after itself, not after the runtime it targets. Emitted
-files require `clj-grpc.codec` and `clj-grpc.runtime`, but those belong to a
+files require `clj-protobuf.codec` and `clj-protobuf.runtime`, but those belong to a
 separate artifact; conflating the two made this repo read as though it were part of
 clj-grpc. `protoc-gen-go` is the same shape — its own package is
 `cmd/protoc-gen-go`, not the runtime package whose imports it emits.
