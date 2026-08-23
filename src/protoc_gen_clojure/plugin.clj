@@ -635,6 +635,14 @@
       (line "")
       (line ";; ---------------------------------------------------------------")
       (line ";; messages")
+      (when interop?
+        ;; The interop arm calls sibling ->proto fns for message-typed fields,
+        ;; and declaration order is proto order — forward references need
+        ;; declaring. The codec arm never references siblings, which is why
+        ;; this did not exist before.
+        (line (str "(declare "
+                   (str/join " " (map #(str (:record-name %) "->proto") msgs))
+                   ")")))
       (line ";;")
       (line ";; The shape is known at codegen time, so the representation is too:")
       (line ";; a defrecord per type, its FieldDescriptors resolved once into")
