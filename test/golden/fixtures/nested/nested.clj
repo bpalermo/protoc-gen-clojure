@@ -4,8 +4,8 @@
 ;; its edition features at load time, so this file needs no regeneration when
 ;; a new edition ships.
 (ns fixtures.nested.nested
-  (:require [clj-grpc.codec :as codec]
-            [clj-grpc.runtime :as rt]))
+  (:require [clj-protobuf.codec :as codec]
+            [clj-protobuf.runtime :as rt]))
 
 (def ^:private descriptor-b64
   "ChxmaXh0dXJlcy9uZXN0ZWQvbmVzdGVkLnByb3RvEg9maXh0dXJlcy5uZXN0ZWQixgMKBU91dGVyEg4KAmlkGAEgASgJUgJpZBI6CgZjb3VudHMYAiADKAsyIi5maXh0dXJlcy5uZXN0ZWQuT3V0ZXIuQ291bnRzRW50cnlSBmNvdW50cxIyCgVpbm5lchgDIAEoCzIcLmZpeHR1cmVzLm5lc3RlZC5PdXRlci5Jbm5lclIFaW5uZXIaOQoLQ291bnRzRW50cnkSEAoDa2V5GAEgASgJUgNrZXkSFAoFdmFsdWUYAiABKAVSBXZhbHVlOgI4ARqBAgoFSW5uZXISEgoEbmFtZRgBIAEoCVIEbmFtZRJACgZsYWJlbHMYAiADKAsyKC5maXh0dXJlcy5uZXN0ZWQuT3V0ZXIuSW5uZXIuTGFiZWxzRW50cnlSBmxhYmVscxJECglpbm5lcm1vc3QYAyABKAsyJi5maXh0dXJlcy5uZXN0ZWQuT3V0ZXIuSW5uZXIuSW5uZXJtb3N0Uglpbm5lcm1vc3QaOQoLTGFiZWxzRW50cnkSEAoDa2V5GAEgASgJUgNrZXkSFAoFdmFsdWUYAiABKAlSBXZhbHVlOgI4ARohCglJbm5lcm1vc3QSFAoFZGVwdGgYASABKAVSBWRlcHRoIiUKBUlubmVyEhwKCXVucmVsYXRlZBgBIAEoCVIJdW5yZWxhdGVkQhwKGGNvbS5hY21lLmZpeHR1cmVzLm5lc3RlZFABYgZwcm90bzM=")

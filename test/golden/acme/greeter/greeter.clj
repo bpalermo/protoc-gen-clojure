@@ -4,9 +4,9 @@
 ;; its edition features at load time, so this file needs no regeneration when
 ;; a new edition ships.
 (ns acme.greeter.greeter
-  (:require [clj-grpc.codec :as codec]
-            [clj-grpc.runtime :as rt]
-            [clj-grpc.runtime.service :as rts]))
+  (:require [clj-protobuf.codec :as codec]
+            [clj-protobuf.runtime :as rt]
+            [clj-grpc.service :as rts]))
 
 (def ^:private descriptor-b64
   "ChphY21lL2dyZWV0ZXIvZ3JlZXRlci5wcm90bxIMYWNtZS5ncmVldGVyInkKDEhlbGxvUmVxdWVzdBISCgRuYW1lGAEgASgJUgRuYW1lEiEKDHJlcGVhdF9jb3VudBgCIAEoBVILcmVwZWF0Q291bnQSMgoIZ3JlZXRpbmcYAyABKA4yFi5hY21lLmdyZWV0ZXIuR3JlZXRpbmdSCGdyZWV0aW5nIiYKCkhlbGxvUmVwbHkSGAoHbWVzc2FnZRgBIAEoCVIHbWVzc2FnZSpMCghHcmVldGluZxIYChRHUkVFVElOR19VTlNQRUNJRklFRBAAEhIKDkdSRUVUSU5HX0hFTExPEAESEgoOR1JFRVRJTkdfSE9XRFkQAjKeAgoHR3JlZXRlchJACghTYXlIZWxsbxIaLmFjbWUuZ3JlZXRlci5IZWxsb1JlcXVlc3QaGC5hY21lLmdyZWV0ZXIuSGVsbG9SZXBseRJGCgxTYXlIZWxsb01hbnkSGi5hY21lLmdyZWV0ZXIuSGVsbG9SZXF1ZXN0GhguYWNtZS5ncmVldGVyLkhlbGxvUmVwbHkwARJHCg1Db2xsZWN0SGVsbG9zEhouYWNtZS5ncmVldGVyLkhlbGxvUmVxdWVzdBoYLmFjbWUuZ3JlZXRlci5IZWxsb1JlcGx5KAESQAoEQ2hhdBIaLmFjbWUuZ3JlZXRlci5IZWxsb1JlcXVlc3QaGC5hY21lLmdyZWV0ZXIuSGVsbG9SZXBseSgBMAFCEgoQY29tLmFjbWUuZ3JlZXRlcmIIZWRpdGlvbnNw6Qc=")

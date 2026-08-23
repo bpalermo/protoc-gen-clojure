@@ -153,9 +153,9 @@
                 (.build))]
     (testing "defaults are the runtime library's current namespaces"
       (let [out (plugin/emit-namespace fdp (constantly false) nil false)]
-        (is (str/includes? out "[clj-grpc.codec :as codec]"))
-        (is (str/includes? out "[clj-grpc.runtime :as rt]"))
-        (is (str/includes? out "[clj-grpc.runtime.service :as rts]"))))
+        (is (str/includes? out "[clj-protobuf.codec :as codec]"))
+        (is (str/includes? out "[clj-protobuf.runtime :as rt]"))
+        (is (str/includes? out "[clj-grpc.service :as rts]"))))
 
     (testing "each can be overridden independently"
       (let [out (plugin/emit-namespace fdp (constantly false) nil false
@@ -165,7 +165,8 @@
         (is (str/includes? out "[acme.pb.codec :as codec]"))
         (is (str/includes? out "[acme.pb.runtime :as rt]"))
         (is (str/includes? out "[acme.rpc.service :as rts]"))
-        (is (not (str/includes? out "clj-grpc")) "no default leaks through")))
+        (is (not (str/includes? out "clj-protobuf.")) "no default leaks through")
+        (is (not (str/includes? out "clj-grpc.")) "no default leaks through")))
 
     (testing "resolution falls back per key, so a partial override is safe"
       (is (= (assoc plugin/default-runtime-namespaces :codec "only.this")
