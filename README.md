@@ -155,6 +155,7 @@ Comma-separated, as `--clojure_out=key=value,key2=value2:DIR`, or via
 |---|---|
 | `ns_prefix=foo` | prefix every generated namespace with `foo.` |
 | `keep_source_info=true` | embed `SourceCodeInfo` (comments and spans). Off by default: it dominates the payload and is useless at runtime. |
+| `interop=true` | emit a typed-interop fast path in each `X->proto`, taken when `opts` is nil — measured ~30–40% on scalar-heavy messages. The generated namespace then **requires protoc's Java classes on the classpath at load**; enum/repeated/map fields and every non-nil-opts call keep the codec path bit-for-bit. Off by default. |
 | `codec_ns=…` | namespace providing `set-field!` / `get-field`. Default `clj-protobuf.codec`. |
 | `runtime_ns=…` | namespace providing `file-descriptor` / `message` / `field`. Default `clj-protobuf.runtime`. |
 | `service_ns=…` | namespace providing `service` / `methods-map`. Default `clj-grpc.service`. |

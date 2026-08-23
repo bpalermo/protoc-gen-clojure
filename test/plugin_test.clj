@@ -13,6 +13,10 @@
             [protoc-gen-clojure.plugin :as plugin])
   (:import [com.google.protobuf DescriptorProtos$Edition
             DescriptorProtos$DescriptorProto DescriptorProtos$FileDescriptorProto
+            DescriptorProtos$FieldDescriptorProto
+            DescriptorProtos$FieldDescriptorProto$Builder
+            DescriptorProtos$FieldDescriptorProto$Label
+            DescriptorProtos$FieldDescriptorProto$Type
             DescriptorProtos$FeatureSet DescriptorProtos$FileOptions
             DescriptorProtos$MessageOptions DescriptorProtos$ServiceDescriptorProto
             UnknownFieldSet UnknownFieldSet$Field]
@@ -139,6 +143,65 @@
     (is (not (str/includes? out "CountsEntry"))
         "a synthetic map entry gets no record — protobuf's own gencode emits no
          class for one either")))
+
+(defn- field
+  "A minimal FieldDescriptorProto for emission tests."
+  ^DescriptorProtos$FieldDescriptorProto$Builder
+  [name type number]
+  (-> (DescriptorProtos$FieldDescriptorProto/newBuilder)
+      (.setName name)
+      (.setType type)
+      (.setNumber (int number))))
+
+(deftest interop-arm-emission
+  (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                (.setName "demo/thing.proto")
+                (.setPackage "demo")
+                (.setSyntax "editions")
+                (.setEdition DescriptorProtos$Edition/EDITION_2024)
+                (.setOptions (-> (DescriptorProtos$FileOptions/newBuilder)
+                                 (.setJavaPackage "com.demo")
+                                 (.build)))
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "Thing")
+                     (.addField (field "name" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1))
+                     (.addField (field "count" DescriptorProtos$FieldDescriptorProto$Type/TYPE_INT32 2))
+                     (.addField (field "payload" DescriptorProtos$FieldDescriptorProto$Type/TYPE_BYTES 3))
+                     (.addField (-> (field "kind" DescriptorProtos$FieldDescriptorProto$Type/TYPE_ENUM 4)
+                                    (.setTypeName ".demo.Kind")))
+                     (.addField (-> (field "child" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 5)
+                                    (.setTypeName ".demo.Thing")))
+                     (.addField (-> (field "tags" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 6)
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_REPEATED)))))
+                (.build))]
+    (testing "off by default: not a character of interop in the output"
+      (let [out (plugin/emit-namespace fdp (constantly false) nil false)]
+        (is (not (str/includes? out "newBuilder)")))
+        (is (not (str/includes? out "when-some")))))
+    (testing "on: typed setters for singular scalar/string/bytes, guarded on nil opts"
+      (let [out (plugin/emit-namespace fdp (constantly false) nil false
+                                       plugin/default-runtime-namespaces true)]
+        (is (str/includes? out "(if (nil? opts)"))
+        (is (str/includes? out "(com.demo.Thing/newBuilder)"))
+        (is (str/includes? out "(.setName b ^String v)"))
+        (is (str/includes? out "(.setCount b (int v))"))
+        (is (str/includes? out "ByteString/copyFrom"))
+        (testing "same-file message fields convert through the sibling ->proto"
+          (is (str/includes? out "(Thing->proto v nil)")))
+        (testing "enum and repeated fields stay on the codec, opts nil"
+          (is (str/includes? out "(codec/set-field! b Thing--kind (:kind m) nil)"))
+          (is (str/includes? out "(codec/set-field! b Thing--tags (:tags m) nil)")))
+        (testing "the codec arm is intact for non-nil opts"
+          (is (str/includes? out "(codec/set-field! b Thing--name (:name m) opts)")))))
+    (testing "no java class, no interop arm — pre-2024 file without multiple_files"
+      (let [plain (-> (.toBuilder fdp)
+                      (.setSyntax "proto3")
+                      (.clearEdition)
+                      (.build))
+            out (plugin/emit-namespace plain (constantly false) nil false
+                                       plugin/default-runtime-namespaces true)]
+        (is (not (str/includes? out "newBuilder)")))))))
 
 (deftest runtime-namespaces-are-configurable
   ;; The requires this emits are the real public API — they are written into every

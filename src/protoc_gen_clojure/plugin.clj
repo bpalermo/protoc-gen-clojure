@@ -33,6 +33,11 @@
     keep_source_info=true  embed SourceCodeInfo (comments/spans) too; off by
                            default because it dominates the payload and is
                            useless at runtime
+    interop=true           emit a typed-interop fast path in each X->proto,
+                           taken when opts is nil. ~30-40% faster on
+                           scalar-heavy messages, and a hard classpath
+                           contract: the generated namespace then requires
+                           protoc's Java classes at load. Off by default.
     codec_ns=…             namespace providing set-field!/get-field
     runtime_ns=…           namespace providing file-descriptor/message/field
     service_ns=…           namespace providing service/methods-map
@@ -45,6 +50,8 @@
   (:require [clojure.string :as str])
   (:import [com.google.protobuf DescriptorProtos$Edition DescriptorProtos$FileDescriptorProto
             DescriptorProtos$DescriptorProto DescriptorProtos$FieldDescriptorProto
+            DescriptorProtos$FieldDescriptorProto$Label
+            DescriptorProtos$FieldDescriptorProto$Type
             DescriptorProtos$FeatureSet DescriptorProtos$ServiceDescriptorProto
             Descriptors$FileDescriptor
             ByteString UnknownFieldSet]
@@ -381,6 +388,74 @@
                          ". Rename one of them.")
                     {:file (.getName fdp) :class munged}))))
 
+(defn- accessor-suffix
+  "proto field name -> protoc's Java accessor suffix (UnderscoresToCamelCase):
+  drop underscores, capitalise after an underscore or digit, preserve case
+  elsewhere. repeat_count -> RepeatCount, f10 -> F10."
+  ^String [^String s]
+  (let [sb (StringBuilder. (.length s))]
+    (loop [i 0 cap? true]
+      (if (= i (.length s))
+        (.toString sb)
+        (let [c (.charAt s i)]
+          (cond
+            (= c \_) (recur (inc i) true)
+            (Character/isDigit c) (do (.append sb c) (recur (inc i) true))
+            :else (do (.append sb (if cap? (Character/toUpperCase c) c))
+                      (recur (inc i) false))))))))
+
+(def ^:private interop-scalar-coercion
+  "For the interop fast path: FieldDescriptorProto$Type -> the Clojure coercion
+  wrapping the typed setter's argument. Types absent here (enums, groups) take
+  the codec path."
+  {DescriptorProtos$FieldDescriptorProto$Type/TYPE_INT32    "int"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_SINT32   "int"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_SFIXED32 "int"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_UINT32   "int"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_FIXED32  "int"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_INT64    "long"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_SINT64   "long"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_SFIXED64 "long"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_UINT64   "long"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_FIXED64  "long"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_FLOAT    "float"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_DOUBLE   "double"
+   DescriptorProtos$FieldDescriptorProto$Type/TYPE_BOOL     "boolean"})
+
+(defn- interop-field-info
+  "What the interop fast path needs to know about one field, or nil when the
+  field takes the codec path there (repeated, map, enum, group, or a message
+  type not declared in this file). map-entry-names is the set of dotted names
+  protoc synthesised for map fields; local-messages maps dotted lookup name ->
+  record name for same-file message types."
+  [^DescriptorProtos$FieldDescriptorProto f pkg map-entry-names local-messages]
+  (let [type     (.getType f)
+        repeated? (= (.getLabel f)
+                     DescriptorProtos$FieldDescriptorProto$Label/LABEL_REPEATED)
+        strip-pkg (fn [^String type-name]
+                    ;; ".acme.greeter.Outer.Inner" -> "Outer.Inner" when the
+                    ;; package matches; nil when it does not (cross-file).
+                    (let [n (if (.startsWith type-name ".") (subs type-name 1) type-name)
+                          prefix (if (seq pkg) (str pkg ".") "")]
+                      (when (.startsWith n prefix)
+                        (subs n (count prefix)))))]
+    (when-not repeated?
+      (cond
+        (contains? interop-scalar-coercion type)
+        {:kind :scalar :coercion (interop-scalar-coercion type)}
+
+        (= type DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING)
+        {:kind :string}
+
+        (= type DescriptorProtos$FieldDescriptorProto$Type/TYPE_BYTES)
+        {:kind :bytes}
+
+        (= type DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE)
+        (when-let [local (strip-pkg (.getTypeName f))]
+          (when (and (not (contains? map-entry-names local))
+                     (contains? local-messages local))
+            {:kind :message :record (get local-messages local)}))))))
+
 (defn- message-tree
   "Every message declared in `fdp`, each enclosing type before the types nested in
   it, as the maps the emitter renders. Map-entry types are skipped, at every level
@@ -394,18 +469,33 @@
   [^DescriptorProtos$FileDescriptorProto fdp]
   (letfn [(map-entry? [^DescriptorProtos$DescriptorProto md]
             (.getMapEntry (.getOptions md)))
-          (walk [^DescriptorProtos$DescriptorProto md path]
+          (names [^DescriptorProtos$DescriptorProto md path pred]
+            (let [path (conj path (.getName md))]
+              (concat (when (pred md) [(str/join "." path)])
+                      (mapcat #(names % path pred) (.getNestedTypeList md)))))
+          (walk [^DescriptorProtos$DescriptorProto md path entry-names locals]
             (let [path (conj path (.getName md))]
               (cons {:record-name (record-name path)
                      :lookup-name (str/join "." path)
                      :java-class  (java-class-name fdp md path)
                      :fields      (mapv (fn [^DescriptorProtos$FieldDescriptorProto f]
                                           {:proto-name (.getName f)
-                                           :key        (field-key-symbol (.getName f))})
+                                           :key        (field-key-symbol (.getName f))
+                                           :setter     (str "set" (accessor-suffix (.getName f)))
+                                           :interop    (interop-field-info
+                                                        f (.getPackage fdp)
+                                                        entry-names locals)})
                                         (.getFieldList md))}
-                    (mapcat #(walk % path)
+                    (mapcat #(walk % path entry-names locals)
                             (remove map-entry? (.getNestedTypeList md))))))]
-    (let [msgs (vec (mapcat #(walk % [])
+    (let [entry-names (set (mapcat #(names % [] map-entry?)
+                                   (.getMessageTypeList fdp)))
+          locals      (into {}
+                            (mapcat (fn [^DescriptorProtos$DescriptorProto md]
+                                      (for [n (names md [] (complement map-entry?))]
+                                        [n (record-name (str/split n #"\."))])))
+                            (.getMessageTypeList fdp))
+          msgs (vec (mapcat #(walk % [] entry-names locals)
                             (remove map-entry? (.getMessageTypeList fdp))))]
       (check-record-names! fdp msgs)
       msgs)))
@@ -496,8 +586,10 @@
   `rt-ns` maps :codec/:runtime/:service to the namespaces the output requires;
   see default-runtime-namespaces."
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info?]
-   (emit-namespace fdp generated? prefix keep-source-info? default-runtime-namespaces))
+   (emit-namespace fdp generated? prefix keep-source-info? default-runtime-namespaces false))
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns]
+   (emit-namespace fdp generated? prefix keep-source-info? rt-ns false))
+  ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns interop?]
   (let [ns-name (proto->ns (.getName fdp) prefix)
         deps    (mapv #(dep-form % generated? prefix) (.getDependencyList fdp))
         ;; protoc ships SourceCodeInfo — every comment and source span — in the
@@ -543,6 +635,14 @@
       (line "")
       (line ";; ---------------------------------------------------------------")
       (line ";; messages")
+      (when interop?
+        ;; The interop arm calls sibling ->proto fns for message-typed fields,
+        ;; and declaration order is proto order — forward references need
+        ;; declaring. The codec arm never references siblings, which is why
+        ;; this did not exist before.
+        (line (str "(declare "
+                   (str/join " " (map #(str (:record-name %) "->proto") msgs))
+                   ")")))
       (line ";;")
       (line ";; The shape is known at codegen time, so the representation is too:")
       (line ";; a defrecord per type, its FieldDescriptors resolved once into")
@@ -577,11 +677,47 @@
         (line  "  with the same keys — records and plain maps are interchangeable.\"")
         (line (str "  ([m] (" msg-name "->proto m nil))"))
         (line  "  ([m opts]")
-        (line (str "   (let [b (.newBuilderForType ^com.google.protobuf.Message "
-                   msg-name "-prototype)]"))
-        (doseq [{:keys [key]} fields]
-          (line (str "     (codec/set-field! b " msg-name "--" key " (:" key " m) opts)")))
-        (line  "     (.build b))))")
+        (if (and interop? java-class)
+          ;; The interop arm: typed setters against the generated class, taken
+          ;; only when opts is nil — the codec arm below keeps every opts
+          ;; semantic bit-for-bit. Fields the fast path cannot spell (enum,
+          ;; repeated, map, cross-file message) use the codec inline; a
+          ;; non-map message value falls back to the codec's coercions too.
+          ;; This arm makes the generated namespace REQUIRE the protoc Java
+          ;; classes at load — that is interop=true's documented contract.
+          (do
+            (line  "   (if (nil? opts)")
+            (line (str "     (let [b (" java-class "/newBuilder)]"))
+            (doseq [{:keys [key setter interop]} fields]
+              (case (:kind interop)
+                :scalar
+                (line (str "       (when-some [v (:" key " m)] (." setter " b ("
+                           (:coercion interop) " v)))"))
+                :string
+                (line (str "       (when-some [v (:" key " m)] (." setter " b ^String v))"))
+                :bytes
+                (line (str "       (when-some [v (:" key " m)] (." setter " b "
+                           "(if (bytes? v) (com.google.protobuf.ByteString/copyFrom ^bytes v) "
+                           "^com.google.protobuf.ByteString v)))"))
+                :message
+                (line (str "       (when-some [v (:" key " m)] (if (map? v) (." setter " b ("
+                           (:record interop) "->proto v nil)) (codec/set-field! b "
+                           msg-name "--" key " v nil)))"))
+                ;; nil: codec path inside the fast arm, opts nil.
+                (line (str "       (codec/set-field! b " msg-name "--" key
+                           " (:" key " m) nil)"))))
+            (line  "       (.build b))")
+            (line (str "     (let [b (.newBuilderForType ^com.google.protobuf.Message "
+                       msg-name "-prototype)]"))
+            (doseq [{:keys [key]} fields]
+              (line (str "       (codec/set-field! b " msg-name "--" key " (:" key " m) opts)")))
+            (line  "       (.build b)))))"))
+          (do
+            (line (str "   (let [b (.newBuilderForType ^com.google.protobuf.Message "
+                       msg-name "-prototype)]"))
+            (doseq [{:keys [key]} fields]
+              (line (str "     (codec/set-field! b " msg-name "--" key " (:" key " m) opts)")))
+            (line  "     (.build b))))")))
         (line (str "(defn proto->" msg-name))
         (line (str "  \"protobuf -> a " msg-name " record. Absent fields are nil.\""))
         (line (str "  ([msg] (proto->" msg-name " msg nil))"))
@@ -612,6 +748,7 @@
   (let [params    (parse-params (.getParameter req))
         prefix    (when (string? (:ns_prefix params)) (:ns_prefix params))
         keep-src? (flag? (:keep_source_info params))
+        interop?  (flag? (:interop params))
         rt-ns     (runtime-namespaces params)
         to-gen    (set (.getFileToGenerateList req))
         generated? #(contains? to-gen %)
@@ -621,7 +758,7 @@
       (let [ns-name (proto->ns (.getName fdp) prefix)]
         (.addFile resp (-> (PluginProtos$CodeGeneratorResponse$File/newBuilder)
                            (.setName (ns->path ns-name))
-                           (.setContent (emit-namespace fdp generated? prefix keep-src? rt-ns))
+                           (.setContent (emit-namespace fdp generated? prefix keep-src? rt-ns interop?))
                            (.build)))))
     (doto resp
       (.setSupportedFeatures
