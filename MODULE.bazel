@@ -6,11 +6,9 @@
 #
 # A consumer uses the prebuilt native binary (see clojure/extensions.bzl), so it
 # never needs rules_clj, a JVM toolchain, or GraalVM to generate one .clj file.
-# That also sidesteps a hard BCR constraint: a published module's non-dev deps
-# must all resolve from BCR, and rules_clj is not published there yet. As a
-# dev_dependency it is ignored entirely when this module is consumed, and the
-# git_override below only applies when this module is the root — exactly the
-# semantics we want.
+# That also honors a hard BCR constraint: a published module's non-dev deps
+# must all resolve from BCR. As a dev_dependency rules_clj is ignored entirely
+# when this module is consumed — exactly the semantics we want.
 #
 # 0.2.0, not 0.1.1: the public load paths moved from //bazel to //clojure, so
 # every consumer's `load` and `use_extension` lines change.
@@ -121,19 +119,12 @@ register_toolchains(
     dev_dependency = True,
 )
 
-# rules_clj: the Clojure ruleset this project builds with. Still a dev_dependency —
-# a consumer gets the prebuilt native binary and needs no Clojure at all — and still
-# overridden, because rules_clj is not in the BCR yet.
-#
-# DELETE THE OVERRIDE once it is accepted there. That is the whole point of the
-# version being pinned below: the day the registry has 0.1.0, removing these four
-# lines is the entire change.
+# rules_clj: the Clojure ruleset this project builds with. A dev_dependency —
+# a consumer gets the prebuilt native binary and needs no Clojure at all —
+# resolved from the Bazel Central Registry like everything else. The
+# git_override that used to sit here existed only because the registry did not
+# have rules_clj yet; deleting it was the entire change, exactly as planned.
 bazel_dep(name = "rules_clj", version = "0.1.0", dev_dependency = True)
-git_override(
-    module_name = "rules_clj",
-    branch = "main",
-    remote = "https://github.com/bpalermo/rules_clj.git",
-)
 
 maven = use_extension(
     "@rules_jvm_external//:extensions.bzl",
