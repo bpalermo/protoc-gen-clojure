@@ -519,7 +519,7 @@
     "@@rules_buf+//buf:extensions.bzl%buf": {
       "general": {
         "bzlTransitiveDigest": "IjW2he5lp+L/zEfsBKIilXijyHH6PC4Lf3y19MA6G4c=",
-        "usagesDigest": "NKcgGKJzBEcXxoPsxVueTiJv/AUki2CyoqFRjcRGOOk=",
+        "usagesDigest": "dlghBpx8PDrZzoQ34U9SxsyhJl9+/MmerHENB9uzkX0=",
         "recordedInputs": [
           "REPO_MAPPING:rules_buf+,bazel_tools bazel_tools"
         ],
