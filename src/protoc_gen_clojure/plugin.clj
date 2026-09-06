@@ -427,7 +427,7 @@
   field takes the codec path there (repeated, map, enum, group, or a message
   type not declared in this file). map-entry-names is the set of dotted names
   protoc synthesised for map fields; local-messages maps dotted lookup name ->
-  record name for same-file message types."
+  {:record :java-class} for same-file message types."
   [^DescriptorProtos$FieldDescriptorProto f pkg map-entry-names local-messages]
   (let [type     (.getType f)
         repeated? (= (.getLabel f)
@@ -454,7 +454,8 @@
         (when-let [local (strip-pkg (.getTypeName f))]
           (when (and (not (contains? map-entry-names local))
                      (contains? local-messages local))
-            {:kind :message :record (get local-messages local)}))))))
+            (let [{:keys [record java-class]} (get local-messages local)]
+              {:kind :message :record record :java-class java-class})))))))
 
 (defn- message-tree
   "Every message declared in `fdp`, each enclosing type before the types nested in
@@ -490,11 +491,20 @@
                             (remove map-entry? (.getNestedTypeList md))))))]
     (let [entry-names (set (mapcat #(names % [] map-entry?)
                                    (.getMessageTypeList fdp)))
-          locals      (into {}
-                            (mapcat (fn [^DescriptorProtos$DescriptorProto md]
-                                      (for [n (names md [] (complement map-entry?))]
-                                        [n (record-name (str/split n #"\."))])))
-                            (.getMessageTypeList fdp))
+          ;; Every same-file message by dotted name, with both spellings a
+          ;; field needs: the record whose ->proto converts a map, and the
+          ;; Java class that ->proto returns. The class is what lets the
+          ;; interop arm hint the call — without it, protoc's builders overload
+          ;; setX for the message and its Builder, Clojure cannot pick one at
+          ;; compile time, and every message-typed field reflects at run time.
+          index       (fn index [^DescriptorProtos$DescriptorProto md path]
+                        (let [path (conj path (.getName md))]
+                          (concat (when-not (map-entry? md)
+                                    [[(str/join "." path)
+                                      {:record     (record-name path)
+                                       :java-class (java-class-name fdp md path)}]])
+                                  (mapcat #(index % path) (.getNestedTypeList md)))))
+          locals      (into {} (mapcat #(index % []) (.getMessageTypeList fdp)))
           msgs (vec (mapcat #(walk % [] entry-names locals)
                             (remove map-entry? (.getMessageTypeList fdp))))]
       (check-record-names! fdp msgs)
@@ -699,9 +709,17 @@
                 (line (str "       (when-some [v (:" key " m)] (." setter " b "
                            "(if (bytes? v) (com.google.protobuf.ByteString/copyFrom ^bytes v) "
                            "^com.google.protobuf.ByteString v)))"))
+                ;; The sibling ->proto call is hinted with the field's own
+                ;; Java class. Without the hint the call is reflective: protoc
+                ;; overloads setX for the message AND its Builder, so Clojure
+                ;; cannot resolve it at compile time — measured at ~7 µs and
+                ;; 12 KB per nested level, on the arm whose whole point is
+                ;; direct typed calls. The hint is the class ->proto returns,
+                ;; which is the class this field is declared with.
                 :message
-                (line (str "       (when-some [v (:" key " m)] (if (map? v) (." setter " b ("
-                           (:record interop) "->proto v nil)) (codec/set-field! b "
+                (line (str "       (when-some [v (:" key " m)] (if (map? v) (." setter " b "
+                           (when-let [jc (:java-class interop)] (str "^" jc " "))
+                           "(" (:record interop) "->proto v nil)) (codec/set-field! b "
                            msg-name "--" key " v nil)))"))
                 ;; nil: codec path inside the fast arm, opts nil.
                 (line (str "       (codec/set-field! b " msg-name "--" key
