@@ -187,8 +187,14 @@
         (is (str/includes? out "(.setName b ^String v)"))
         (is (str/includes? out "(.setCount b (int v))"))
         (is (str/includes? out "ByteString/copyFrom"))
-        (testing "same-file message fields convert through the sibling ->proto"
-          (is (str/includes? out "(Thing->proto v nil)")))
+        (testing "same-file message fields convert through the sibling ->proto,
+                  HINTED with the field's class — protoc overloads setX for the
+                  message and its Builder, so an unhinted call reflects on every
+                  message-typed field, which is the one cost this arm exists to
+                  remove"
+          (is (str/includes? out "(.setChild b ^com.demo.Thing (Thing->proto v nil))"))
+          (is (not (re-find #"\(\.setChild b \(Thing->proto" out))
+              "no unhinted spelling survives"))
         (testing "enum and repeated fields stay on the codec, opts nil"
           (is (str/includes? out "(codec/set-field! b Thing--kind (:kind m) nil)"))
           (is (str/includes? out "(codec/set-field! b Thing--tags (:tags m) nil)")))
@@ -202,6 +208,36 @@
             out (plugin/emit-namespace plain (constantly false) nil false
                                        plugin/default-runtime-namespaces true)]
         (is (not (str/includes? out "newBuilder)")))))))
+
+(deftest interop-arm-hints-nested-classes
+  ;; A nested message's class is Outer$Inner on the JVM whatever the file
+  ;; options say; the hint must spell it that way or it names a class that does
+  ;; not exist and the namespace fails to load.
+  (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                (.setName "demo/nest.proto")
+                (.setPackage "demo")
+                (.setSyntax "editions")
+                (.setEdition DescriptorProtos$Edition/EDITION_2024)
+                (.setOptions (-> (DescriptorProtos$FileOptions/newBuilder)
+                                 (.setJavaPackage "com.demo")
+                                 (.build)))
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "Outer")
+                     (.addField (-> (field "inner" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 1)
+                                    (.setTypeName ".demo.Outer.Inner")))
+                     (.addNestedType
+                      (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                          (.setName "Inner")
+                          (.addField (-> (field "back" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 1)
+                                         (.setTypeName ".demo.Outer")))))))
+                (.build))
+        out (plugin/emit-namespace fdp (constantly false) nil false
+                                   plugin/default-runtime-namespaces true)]
+    (is (str/includes? out "(.setInner b ^com.demo.Outer$Inner (Outer-Inner->proto v nil))")
+        "the nested class is spelled with $")
+    (is (str/includes? out "(.setBack b ^com.demo.Outer (Outer->proto v nil))")
+        "and a nested type referring back up gets the top-level class")))
 
 (deftest runtime-namespaces-are-configurable
   ;; The requires this emits are the real public API — they are written into every
