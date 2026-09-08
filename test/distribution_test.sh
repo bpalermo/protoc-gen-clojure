@@ -123,5 +123,29 @@ diff -u out-protoc/demo/hello.clj out-buf/demo/hello.clj ||
   }
 echo "OK: protoc and buf agree byte for byte"
 
+echo "=== 5. interop=true, the arms whose names the plugin derives"
+# The native image is the reason this step exists rather than a bazel test: the
+# interop arms are the only emitter path that reads RESOLVED descriptors, and an
+# unhinted call there works on the JVM and dies in the image with "No matching
+# field found". Nothing else in the suite runs that code through the artifact.
+mkdir -p out-interop
+protoc --clojure_out=out-interop --clojure_opt=interop=true demo/hello.proto
+check out-interop "protoc interop=true"
+grep -q '(demo.Hello/newBuilder)' out-interop/demo/hello.clj || {
+  echo "FAIL: interop=true emitted no typed write arm" >&2
+  exit 1
+}
+grep -q '(instance? demo.Hello msg)' out-interop/demo/hello.clj || {
+  echo "FAIL: interop=true emitted no typed read arm" >&2
+  exit 1
+}
+# edition 2024 is field_presence = EXPLICIT, so the read is guarded — which only
+# a resolved descriptor can say.
+grep -q '(when (.hasName m) (.getName m))' out-interop/demo/hello.clj || {
+  echo "FAIL: interop=true read arm has no presence guard" >&2
+  exit 1
+}
+echo "OK: interop=true emitted both typed arms"
+
 echo
 echo "distribution test passed"

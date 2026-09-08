@@ -17,8 +17,12 @@
             DescriptorProtos$FieldDescriptorProto$Builder
             DescriptorProtos$FieldDescriptorProto$Label
             DescriptorProtos$FieldDescriptorProto$Type
+            DescriptorProtos$EnumDescriptorProto
+            DescriptorProtos$EnumValueDescriptorProto
             DescriptorProtos$FeatureSet DescriptorProtos$FileOptions
-            DescriptorProtos$MessageOptions DescriptorProtos$ServiceDescriptorProto
+            DescriptorProtos$EnumOptions
+            DescriptorProtos$MessageOptions DescriptorProtos$OneofDescriptorProto
+            DescriptorProtos$ServiceDescriptorProto
             UnknownFieldSet UnknownFieldSet$Field]
            [com.google.protobuf.compiler PluginProtos$CodeGeneratorRequest
             PluginProtos$CodeGeneratorResponse$Feature]))
@@ -144,6 +148,22 @@
         "a synthetic map entry gets no record — protobuf's own gencode emits no
          class for one either")))
 
+(defn- read-forms
+  "Every form in emitted source, as data. The emitter builds text, so a missing
+  paren is invisible until someone compiles the result."
+  [^String out]
+  (let [r (java.io.PushbackReader. (java.io.StringReader. out))]
+    (loop [acc []]
+      (let [form (read {:eof ::eof :read-cond :allow} r)]
+        (if (= form ::eof) acc (recur (conj acc form)))))))
+
+(defn- enum-value
+  "One EnumValueDescriptorProto."
+  [name number]
+  (-> (DescriptorProtos$EnumValueDescriptorProto/newBuilder)
+      (.setName name)
+      (.setNumber (int number))))
+
 (defn- field
   "A minimal FieldDescriptorProto for emission tests."
   ^DescriptorProtos$FieldDescriptorProto$Builder
@@ -174,6 +194,14 @@
                                     (.setTypeName ".demo.Thing")))
                      (.addField (-> (field "tags" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 6)
                                     (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_REPEATED)))))
+                ;; Declared, not merely referenced: the READ arm is emitted only
+                ;; for a file protobuf-java can BUILD, and a field whose enum type
+                ;; is undefined makes the whole file unbuildable.
+                (.addEnumType
+                 (-> (DescriptorProtos$EnumDescriptorProto/newBuilder)
+                     (.setName "Kind")
+                     (.addValue (enum-value "KIND_UNSPECIFIED" 0))
+                     (.addValue (enum-value "KIND_THING" 1))))
                 (.build))]
     (testing "off by default: not a character of interop in the output"
       (let [out (plugin/emit-namespace fdp (constantly false) nil false)]
@@ -199,7 +227,38 @@
           (is (str/includes? out "(codec/set-field! b Thing--kind (:kind m) nil)"))
           (is (str/includes? out "(codec/set-field! b Thing--tags (:tags m) nil)")))
         (testing "the codec arm is intact for non-nil opts"
-          (is (str/includes? out "(codec/set-field! b Thing--name (:name m) opts)")))))
+          (is (str/includes? out "(codec/set-field! b Thing--name (:name m) opts)")))
+        (testing "and the READ arm: typed getters, the class checked because
+                  proto->X takes any Message and this arm reads one class's own
+                  accessors"
+          (is (str/includes? out "(if (and (nil? opts) (instance? com.demo.Thing msg))"))
+          (is (str/includes? out "(let [^com.demo.Thing m msg]"))
+          (testing "edition 2024 is field_presence = EXPLICIT, so every singular
+                    read is guarded — a fact only a resolved descriptor carries"
+            (is (str/includes? out "(when (.hasName m) (.getName m))"))
+            (is (str/includes? out "(when (.hasCount m) (.getCount m))")))
+          (testing "bytes reach Clojure as a byte array, as the codec returns them"
+            (is (str/includes? out "(when (.hasPayload m) (.toByteArray (.getPayload m)))")))
+          (testing "an enum becomes a case over its declared numbers, with the
+                    codec as the default arm: an OPEN enum can hold a number no
+                    value names, and naming those is protobuf's business"
+            (is (str/includes? out (str "(when (.hasKind m) (case (.getKindValue m) "
+                                       "0 :KIND_UNSPECIFIED 1 :KIND_THING "
+                                       "(codec/get-field m Thing--kind nil)))"))))
+          (testing "a repeated field is a vector, nil when empty — which is what
+                    the codec reads an empty repeated field as"
+            (is (str/includes? out "(let [l (.getTagsList m)] (when-not (.isEmpty l) (vec l)))")))
+          (testing "a nested message reads back as a plain MAP, not a record: a
+                    record is not = to a map with the same keys, and the codec arm
+                    returns maps, so records would put the two arms in
+                    disagreement"
+            (is (str/includes? out "(when (.hasChild m) (proto->Thing--map (.getChild m)))"))
+            (is (str/includes? out "(defn- proto->Thing--map")))
+          (testing "the codec arm is intact for non-nil opts here too"
+            (is (str/includes? out "(codec/get-field msg Thing--name opts)"))))
+        (testing "every emitted form reads — an unbalanced arm would only surface
+                  in the consumer's build"
+          (is (pos? (count (read-forms out)))))))
     (testing "no java class, no interop arm — pre-2024 file without multiple_files"
       (let [plain (-> (.toBuilder fdp)
                       (.setSyntax "proto3")
@@ -238,6 +297,186 @@
         "the nested class is spelled with $")
     (is (str/includes? out "(.setBack b ^com.demo.Outer (Outer->proto v nil))")
         "and a nested type referring back up gets the top-level class")))
+
+(defn- thing-file
+  "A one-message file in `syntax`, java_multiple_files so the Java class is
+  derivable, with `fields` on the message."
+  [syntax & fields]
+  (let [b (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+              (.setName "demo/thing.proto")
+              (.setPackage "demo")
+              (.setSyntax syntax)
+              (.setOptions (-> (DescriptorProtos$FileOptions/newBuilder)
+                               (.setJavaPackage "com.demo")
+                               (.setJavaMultipleFiles true)
+                               (.build))))
+        md (DescriptorProtos$DescriptorProto/newBuilder)]
+    (.setName md "Thing")
+    (doseq [f fields] (.addField md ^DescriptorProtos$FieldDescriptorProto$Builder f))
+    (.build (.addMessageType b md))))
+
+(defn- interop-out [fdp]
+  (plugin/emit-namespace fdp (constantly false) nil false
+                         plugin/default-runtime-namespaces true))
+
+(deftest interop-read-presence-comes-from-the-descriptor
+  ;; The one mistake this arm can make silently. A presence guard where protoc
+  ;; generated no hasser does not compile, so it fails loudly; omitting one where
+  ;; protoc DID generate it reads a default as though it were a value, and
+  ;; nothing complains. proto2, proto3, proto3 `optional` and editions all answer
+  ;; differently, which is why the answer is read off a resolved FieldDescriptor
+  ;; rather than derived from the label.
+  (testing "proto3 without `optional`: IMPLICIT presence, so no guard and no
+            absence — the default is the value"
+    (let [out (interop-out (thing-file "proto3"
+                                       (field "str_field"
+                                              DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1)))]
+      (is (str/includes? out "(->Thing\n        (.getStrField m)"))
+      (is (not (str/includes? out "hasStrField")))))
+
+  (testing "proto3 `optional`: explicit presence, through the synthetic oneof"
+    (let [fdp (thing-file "proto3"
+                          (-> (field "opt_str"
+                                     DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1)
+                              (.setProto3Optional true)
+                              (.setOneofIndex 0)))
+          ;; protoc puts a proto3 `optional` field in a one-member synthetic
+          ;; oneof named after it, and protobuf-java refuses to build the file
+          ;; without one.
+          fdp (-> (.toBuilder fdp)
+                  (.setMessageType
+                   0 (-> (.toBuilder (.getMessageType fdp 0))
+                         (.addOneofDecl (-> (DescriptorProtos$OneofDescriptorProto/newBuilder)
+                                            (.setName "_opt_str")))))
+                  (.build))]
+      (is (str/includes? (interop-out fdp) "(when (.hasOptStr m) (.getOptStr m))"))))
+
+  (testing "proto2: every singular field has presence"
+    (let [out (interop-out (thing-file "proto2"
+                                       (-> (field "str_field"
+                                                  DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1)
+                                           (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL))))]
+      (is (str/includes? out "(when (.hasStrField m) (.getStrField m))")))))
+
+(deftest interop-read-declines-what-it-cannot-spell
+  (testing "an aliased enum stays on the codec: two names share a number, and the
+            codec's own arms disagree on which one wins, so a `case` here would
+            have to pick"
+    (let [out (interop-out
+               (-> (.toBuilder (thing-file "proto2"
+                                           ;; a second field, so the message still
+                                           ;; gets a typed arm for the enum to sit
+                                           ;; in: a message with nothing spellable
+                                           ;; gets no fast arm at all
+                                           (-> (field "name"
+                                                      DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 2)
+                                               (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL))
+                                           (-> (field "kind"
+                                                      DescriptorProtos$FieldDescriptorProto$Type/TYPE_ENUM 1)
+                                               (.setTypeName ".demo.Kind")
+                                               (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL))))
+                   (.addEnumType
+                    (-> (DescriptorProtos$EnumDescriptorProto/newBuilder)
+                        (.setName "Kind")
+                        (.setOptions (-> (DescriptorProtos$EnumOptions/newBuilder)
+                                         (.setAllowAlias true)
+                                         (.build)))
+                        (.addValue (enum-value "KIND_UNSPECIFIED" 0))
+                        (.addValue (enum-value "KIND_ZERO" 0))))
+                   (.build)))]
+      (is (str/includes? out "(codec/get-field m Thing--kind nil)"))
+      (is (not (str/includes? out "(case (.getNumber (.getKind m))")))))
+
+  (testing "a field whose accessor would shadow an inherited method gets protoc's
+            trailing underscore — `class` is the one name where guessing wrong
+            COMPILES, because (.getClass m) is a method on every object"
+    (let [out (interop-out (thing-file "proto2"
+                                       (-> (field "class"
+                                                  DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1)
+                                           (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL))))]
+      (is (str/includes? out "(when (.hasClass_ m) (.getClass_ m))"))
+      (is (str/includes? out "(.setClass_ b ^String v)"))
+      (is (not (re-find #"\(\.getClass m\)" out))))))
+
+(deftest interop-read-emits-every-sibling-it-declares
+  ;; A nested message's map-building read is emitted because something REFERS to
+  ;; it, not because it has a fast read of its own. Keying it on the latter left
+  ;; an empty message declared and never defined, and the call site — in another
+  ;; message's fast arm — then failed at run time on an unbound var.
+  (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                (.setName "demo/thing.proto")
+                (.setPackage "demo")
+                (.setSyntax "proto3")
+                (.setOptions (-> (DescriptorProtos$FileOptions/newBuilder)
+                                 (.setJavaPackage "com.demo")
+                                 (.setJavaMultipleFiles true)
+                                 (.build)))
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "Thing")
+                     (.addField (field "name" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1))
+                     (.addField (-> (field "empty" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 2)
+                                    (.setTypeName ".demo.Empty")))))
+                (.addMessageType (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                                     (.setName "Empty")))
+                (.build))
+        out (interop-out fdp)]
+    (is (str/includes? out "(when (.hasEmpty m) (proto->Empty--map (.getEmpty m)))"))
+    (is (str/includes? out "(defn- proto->Empty--map")
+        "the sibling every reference needs, even for a message with no fields")
+    (is (str/includes? out "  {})")
+        "and an empty message reads back as an empty map, which is what the
+         codec's own nested read returns for one")))
+
+(deftest interop-read-builds-nested-maps-in-one-allocation
+  ;; The map-building sibling is the allocation-sensitive half: on a list of
+  ;; small messages it runs once per element. A chain of `assoc` copies a growing
+  ;; array per present field — 192 B for three where a literal is 72 — so the
+  ;; all-present case, which is the common one, gets the literal, and everything
+  ;; else a single transient rather than a chain whose cost grows with the square
+  ;; of the number of present fields.
+  (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                (.setName "demo/thing.proto")
+                (.setPackage "demo")
+                (.setSyntax "proto2")
+                (.setOptions (-> (DescriptorProtos$FileOptions/newBuilder)
+                                 (.setJavaPackage "com.demo")
+                                 (.setJavaMultipleFiles true)
+                                 (.build)))
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "Thing")
+                     (.addField (-> (field "pair" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 1)
+                                    (.setTypeName ".demo.Pair")
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL)))
+                     (.addField (-> (field "one" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 2)
+                                    (.setTypeName ".demo.One")
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL)))))
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "Pair")
+                     (.addField (-> (field "a" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1)
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL)))
+                     (.addField (-> (field "b" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 2)
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL)))))
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "One")
+                     (.addField (-> (field "only" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1)
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_OPTIONAL)))))
+                (.build))
+        out (interop-out fdp)]
+    (testing "two or more conditional fields: a literal when all are present, one
+              transient otherwise"
+      (is (str/includes? out "(if (and (some? a--v) (some? b--v))"))
+      (is (str/includes? out "{:a a--v\n       :b b--v}"))
+      (is (str/includes? out "(cond-> (transient {})"))
+      (is (str/includes? out "(some? a--v) (assoc! :a a--v)")))
+    (testing "one conditional field: `not all present` IS `absent`, so both arms
+              are literals and neither builds an intermediate"
+      (is (str/includes? out "(if (some? only--v)"))
+      (is (not (str/includes? out "(assoc! :only only--v)"))))
+    (is (pos? (count (read-forms out))))))
 
 (deftest runtime-namespaces-are-configurable
   ;; The requires this emits are the real public API — they are written into every
