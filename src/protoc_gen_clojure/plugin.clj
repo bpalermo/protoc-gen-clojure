@@ -26,18 +26,24 @@
     FileDescriptorProto verbatim and lets protobuf-java's
     `FileDescriptor/buildFrom` resolve features at load time. So a future
     edition needs no codegen changes at all: it changes what protobuf-java
-    resolves, not what we emit.
+    resolves, not what we emit. interop=true's typed read path needs resolved
+    features at CODEGEN time too — presence and enum openness decide what it can
+    spell — and gets them the same way, by handing the request to
+    `FileDescriptor/buildFrom` (see `resolve-files`). Delegating, not
+    reimplementing: there is still no defaults table here.
 
   Parameters (comma-separated, `protoc --clojure_out=key=value,key2=value2:DIR`):
     ns_prefix=foo          prefix every generated namespace with `foo.`
     keep_source_info=true  embed SourceCodeInfo (comments/spans) too; off by
                            default because it dominates the payload and is
                            useless at runtime
-    interop=true           emit a typed-interop fast path in each X->proto,
-                           taken when opts is nil. ~30-40% faster on
-                           scalar-heavy messages, and a hard classpath
-                           contract: the generated namespace then requires
-                           protoc's Java classes at load. Off by default.
+    interop=true           emit typed fast paths in BOTH directions: X->proto
+                           when opts is nil, proto->X when opts is nil and the
+                           message is the generated class. ~30-40% faster on
+                           scalar-heavy writes, 2-3x on reads of small and
+                           nested messages. A hard classpath contract: the
+                           generated namespace then requires protoc's Java
+                           classes at load. Off by default.
     codec_ns=…             namespace providing set-field!/get-field
     runtime_ns=…           namespace providing file-descriptor/message/field
     service_ns=…           namespace providing service/methods-map
@@ -53,6 +59,9 @@
             DescriptorProtos$FieldDescriptorProto$Label
             DescriptorProtos$FieldDescriptorProto$Type
             DescriptorProtos$FeatureSet DescriptorProtos$ServiceDescriptorProto
+            Descriptors$Descriptor Descriptors$EnumDescriptor
+            Descriptors$EnumValueDescriptor Descriptors$FieldDescriptor
+            Descriptors$FieldDescriptor$JavaType Descriptors$FieldDescriptor$Type
             Descriptors$FileDescriptor
             ByteString UnknownFieldSet]
            [com.google.protobuf.compiler PluginProtos$CodeGeneratorRequest
@@ -388,15 +397,32 @@
                          ". Rename one of them.")
                     {:file (.getName fdp) :class munged}))))
 
+(def ^:private forbidden-accessor-suffixes
+  "Accessor suffixes protoc refuses to generate bare, because they would collide
+  with a method on java.lang.Object or on the Message interfaces. protoc appends
+  `_` to each: a field named `class` is read with getClass_(), not getClass().
+  From compiler/java/names.cc — IsForbidden compares exactly the string
+  UnderscoresToCamelCase produces, which is what accessor-suffix computes.
+
+  The read path is why this is here rather than left as a latent write-path bug:
+  a setter we spell wrong does not compile, but `(.getClass m)` compiles fine and
+  returns the object's Class. That is the one accessor mistake this plugin can
+  make silently, so the one it must not make."
+  #{"Class" "DefaultInstanceForType" "ParserForType" "SerializedSize"
+    "AllFields" "DescriptorForType" "InitializationErrorString" "UnknownFields"
+    "CachedSize"})
+
 (defn- accessor-suffix
   "proto field name -> protoc's Java accessor suffix (UnderscoresToCamelCase):
   drop underscores, capitalise after an underscore or digit, preserve case
-  elsewhere. repeat_count -> RepeatCount, f10 -> F10."
+  elsewhere. repeat_count -> RepeatCount, f10 -> F10. A suffix that would shadow
+  an inherited method gets protoc's trailing underscore; see above."
   ^String [^String s]
   (let [sb (StringBuilder. (.length s))]
     (loop [i 0 cap? true]
       (if (= i (.length s))
-        (.toString sb)
+        (let [out (.toString sb)]
+          (if (contains? forbidden-accessor-suffixes out) (str out "_") out))
         (let [c (.charAt s i)]
           (cond
             (= c \_) (recur (inc i) true)
@@ -423,22 +449,17 @@
    DescriptorProtos$FieldDescriptorProto$Type/TYPE_BOOL     "boolean"})
 
 (defn- interop-field-info
-  "What the interop fast path needs to know about one field, or nil when the
+  "What the interop WRITE path needs to know about one field, or nil when the
   field takes the codec path there (repeated, map, enum, group, or a message
-  type not declared in this file). map-entry-names is the set of dotted names
-  protoc synthesised for map fields; local-messages maps dotted lookup name ->
-  {:record :java-class} for same-file message types."
-  [^DescriptorProtos$FieldDescriptorProto f pkg map-entry-names local-messages]
+  type not declared in this file). local-messages maps a message's FULL proto
+  name -> {:record :java-class}, and a type name in a FileDescriptorProto is
+  always fully qualified, so a lookup miss is exactly the cross-file case.
+  Map-entry types are absent from that index, so a map field could not match
+  even if its LABEL_REPEATED did not already exclude it."
+  [^DescriptorProtos$FieldDescriptorProto f local-messages]
   (let [type     (.getType f)
         repeated? (= (.getLabel f)
-                     DescriptorProtos$FieldDescriptorProto$Label/LABEL_REPEATED)
-        strip-pkg (fn [^String type-name]
-                    ;; ".acme.greeter.Outer.Inner" -> "Outer.Inner" when the
-                    ;; package matches; nil when it does not (cross-file).
-                    (let [n (if (.startsWith type-name ".") (subs type-name 1) type-name)
-                          prefix (if (seq pkg) (str pkg ".") "")]
-                      (when (.startsWith n prefix)
-                        (subs n (count prefix)))))]
+                     DescriptorProtos$FieldDescriptorProto$Label/LABEL_REPEATED)]
     (when-not repeated?
       (cond
         (contains? interop-scalar-coercion type)
@@ -451,64 +472,256 @@
         {:kind :bytes}
 
         (= type DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE)
-        (when-let [local (strip-pkg (.getTypeName f))]
-          (when (and (not (contains? map-entry-names local))
-                     (contains? local-messages local))
-            (let [{:keys [record java-class]} (get local-messages local)]
-              {:kind :message :record record :java-class java-class})))))))
+        (let [{:keys [record java-class]}
+              (get local-messages (str/replace-first (.getTypeName f) #"^\." ""))]
+          (when record
+            {:kind :message :record record :java-class java-class}))))))
+
+;; ---------------------------------------------------------------------------
+;; the interop READ path
+;;
+;; The mirror of the write path above, and the half that was missing: with
+;; interop=true every X->proto took typed setters while every proto->X still
+;; called codec/get-field per field — a megamorphic invoker call, plus, for a
+;; message-typed field, a map allocated only for the record constructor to throw
+;; away. Measured over the bench fixtures the emitted read is 2-3x faster than
+;; either arm on small and nested shapes, because it builds no intermediate.
+;;
+;; Three things decide what can be spelled here, and none of them is answerable
+;; from a FileDescriptorProto alone:
+;;
+;;   PRESENCE. `(when (.hasX m) …)` where presence exists, a bare `(.getX m)`
+;;   where it does not. Emitting the guard where protoc generated no hasser does
+;;   not compile; omitting it where it did turns absence into a default,
+;;   silently. proto2, proto3 `optional`, oneof members and editions EXPLICIT all
+;;   answer differently, and the editions answer is a resolved feature.
+;;
+;;   ENUM OPENNESS. getXValue() is generated only for open enums; a closed one
+;;   is read through its Java enum. Also a resolved feature under editions.
+;;
+;;   WHAT THE FIELD ACTUALLY IS. Delimited (group-like) fields are named after
+;;   their message type rather than the field, so they stay on the codec.
+;;
+;; So this path works from RESOLVED descriptors — protobuf-java's own, built from
+;; the request in `resolve-files`. That is the same delegation the emitted file
+;; makes when it hands its embedded descriptor to FileDescriptor/buildFrom at
+;; load: protobuf-java resolves features, this plugin still owns no defaults
+;; table. Where a file cannot be resolved there is simply no typed read arm.
+
+(def ^:private read-plain-java-types
+  "JavaTypes a generated getter already returns in the codec's representation, so
+  the read is the getter and nothing else. BYTE_STRING, ENUM and MESSAGE are the
+  three that need converting; see read-info."
+  #{Descriptors$FieldDescriptor$JavaType/INT
+    Descriptors$FieldDescriptor$JavaType/LONG
+    Descriptors$FieldDescriptor$JavaType/FLOAT
+    Descriptors$FieldDescriptor$JavaType/DOUBLE
+    Descriptors$FieldDescriptor$JavaType/BOOLEAN
+    Descriptors$FieldDescriptor$JavaType/STRING})
+
+(defn- local-record
+  "The record name for a message-typed field this file can convert itself, or
+  nil. nil covers a cross-file type, a group-like (DELIMITED) field — whose Java
+  accessor is named after the message type, not the field — and a message whose
+  Java class name could not be derived, which is what the sibling read needs to
+  hint its argument."
+  [^Descriptors$FieldDescriptor fd local-messages]
+  (when (and (= Descriptors$FieldDescriptor$JavaType/MESSAGE (.getJavaType fd))
+             (not= Descriptors$FieldDescriptor$Type/GROUP (.getType fd)))
+    (let [{:keys [record java-class]}
+          (get local-messages (.getFullName (.getMessageType fd)))]
+      (when java-class record))))
+
+(defn- element-conv
+  "How one element of a repeated or map-valued field converts: a function from
+  the expression producing the element to its converted form, `identity` when it
+  needs none — which is what lets a repeated scalar go through `vec` — or nil
+  when the element kind has no fast spelling and the whole field stays on the
+  codec."
+  [^Descriptors$FieldDescriptor fd local-messages]
+  (let [jt (.getJavaType fd)]
+    (cond
+      (contains? read-plain-java-types jt) identity
+
+      (= Descriptors$FieldDescriptor$JavaType/BYTE_STRING jt)
+      #(str "(.toByteArray ^com.google.protobuf.ByteString " % ")")
+
+      ;; Enums are the exception, and deliberately: a singular enum can fall back
+      ;; to codec/get-field for a number no declared value names, because the
+      ;; fallback reads the whole field. Inside a collection there is no
+      ;; per-element equivalent short of reproducing protobuf's synthetic
+      ;; UNKNOWN_ENUM_VALUE_* naming, so repeated and map-valued enums stay on
+      ;; the codec entirely.
+      :else
+      (when-let [r (local-record fd local-messages)]
+        #(str "(proto->" r "--map " % ")")))))
+
+(defn- enum-clauses
+  "`case` clauses mapping an enum's declared numbers to the keywords the codec
+  reads them back as, or nil when the enum cannot be spelled as a `case`: no
+  values at all, or two values sharing a number (allow_alias), where the codec's
+  own two arms disagree on which name wins and this path declines to pick."
+  [^Descriptors$EnumDescriptor ed]
+  (let [vs   (.getValues ed)
+        nums (map #(.getNumber ^Descriptors$EnumValueDescriptor %) vs)]
+    (when (and (seq vs) (= (count nums) (count (set nums))))
+      (str/join " " (map (fn [^Descriptors$EnumValueDescriptor v]
+                           (str (.getNumber v) " :" (.getName v)))
+                         vs)))))
+
+(defn- read-info
+  "How the typed read arm spells one field —
+
+    {:expr    the expression, with `m` bound to the typed message
+     :always?  true when it can never be nil, so a nested map always carries the key
+     :sibling  the record whose map-building read this expression calls, if any}
+
+  — or nil when the field stays on the codec there. `var-name` names the field's
+  FieldDescriptor var, used for the codec fallback inside an enum's `case`."
+  [^Descriptors$FieldDescriptor fd local-messages ^String var-name]
+  (let [acc (accessor-suffix (.getName fd))
+        jt  (.getJavaType fd)]
+    (cond
+      ;; A map reads back as a Clojure map, nil when empty. getXMap() hands over
+      ;; the entries directly: no entry messages are materialized on either side.
+      ;;
+      ;; The reduce, and not `(into {} jm)`, which reads better and costs more:
+      ;; into conj!s a java.util.Map$Entry at a time, and measured over a
+      ;; LinkedHashMap it runs ~1.7x slower and allocates ~2.4x more at every
+      ;; size from 4 entries to 256 (680 B against 232 at 4, 27.8 KB against 11.6
+      ;; at 256). This is the same shape the codec uses on its own fast arm.
+      (.isMapField fd)
+      (let [vfd  (.findFieldByName (.getMessageType fd) "value")
+            conv (element-conv vfd local-messages)]
+        (when conv
+          {:always? false
+           :sibling (local-record vfd local-messages)
+           :expr (str "(let [jm (.get" acc "Map m)] (when-not (.isEmpty jm) "
+                      "(persistent! (reduce (fn [acc ^java.util.Map$Entry e]"
+                      " (assoc! acc (.getKey e) " (conv "(.getValue e)") "))"
+                      " (transient {}) (.entrySet jm)))"
+                      "))")}))
+
+      ;; Repeated: a vector, nil when empty — the codec's own reading of an empty
+      ;; repeated field, which has no presence to distinguish it from absence.
+      (.isRepeated fd)
+      (let [conv (element-conv fd local-messages)]
+        (when conv
+          {:always? false
+           :sibling (local-record fd local-messages)
+           :expr (str "(let [l (.get" acc "List m)] (when-not (.isEmpty l) "
+                      (if (identical? identity conv)
+                        "(vec l)"
+                        (str "(persistent! (reduce (fn [acc v] (conj! acc "
+                             (conv "v") ")) (transient []) l))"))
+                      "))")}))
+
+      :else
+      (let [record (local-record fd local-messages)
+            core
+            (cond
+              (contains? read-plain-java-types jt) (str "(.get" acc " m)")
+
+              (= Descriptors$FieldDescriptor$JavaType/BYTE_STRING jt)
+              (str "(.toByteArray (.get" acc " m))")
+
+              (= Descriptors$FieldDescriptor$JavaType/ENUM jt)
+              ;; Hinted because getEnumType() has a bridge overload returning
+              ;; Internal$EnumLiteMap, and an unhinted binding leaves the calls
+              ;; below to reflection.
+              (let [^Descriptors$EnumDescriptor ed (.getEnumType fd)]
+                (when-let [clauses (enum-clauses ed)]
+                  (str "(case "
+                       (if (.isClosed ed)
+                         ;; No getXValue() for a closed enum — it is generated
+                         ;; only where an unknown number is representable. The
+                         ;; Java enum's own getNumber() needs no hint: `m` is
+                         ;; typed, so the getter's return type is known.
+                         (str "(.getNumber (.get" acc " m))")
+                         (str "(.get" acc "Value m)"))
+                       " " clauses
+                       ;; An open enum can hold a number no value declares. The
+                       ;; codec names those the way protobuf does; reproducing
+                       ;; that here would mean owning protobuf's synthetic
+                       ;; naming, so the default arm asks the codec instead.
+                       " (codec/get-field m " var-name " nil))")))
+
+              record (str "(proto->" record "--map (.get" acc " m))"))]
+        (when core
+          {:always? (not (.hasPresence fd))
+           :sibling record
+           :expr (if (.hasPresence fd)
+                   (str "(when (.has" acc " m) " core ")")
+                   core)})))))
 
 (defn- message-tree
   "Every message declared in `fdp`, each enclosing type before the types nested in
   it, as the maps the emitter renders. Map-entry types are skipped, at every level
   including the root.
 
-  The root filter is for descriptors this plugin did not get from protoc. protoc
-  synthesises map-entry types only as nested types and rejects the option written by
-  hand — `option map_entry = true` fails with \"should not be set explicitly\" — but
-  --descriptor_set_in accepts a set from anywhere, and a filter that holds only
-  below the root would make this docstring a lie for one input class."
-  [^DescriptorProtos$FileDescriptorProto fdp]
+  `resolved` is `fdp` as a built FileDescriptor, or nil. It carries what only
+  feature resolution can answer — presence, enum openness, what a delimited field
+  really is — so the typed READ path is emitted for a message only when it is
+  present; the write path and everything else never needed it. The walk descends
+  both trees together rather than looking types up by name, because
+  FileDescriptor offers no lookup for a nested type.
+
+  The root map-entry filter is for descriptors this plugin did not get from
+  protoc. protoc synthesises map-entry types only as nested types and rejects the
+  option written by hand — `option map_entry = true` fails with \"should not be
+  set explicitly\" — but --descriptor_set_in accepts a set from anywhere, and a
+  filter that holds only below the root would make this docstring a lie for one
+  input class."
+  ([^DescriptorProtos$FileDescriptorProto fdp] (message-tree fdp nil))
+  ([^DescriptorProtos$FileDescriptorProto fdp ^Descriptors$FileDescriptor resolved]
   (letfn [(map-entry? [^DescriptorProtos$DescriptorProto md]
             (.getMapEntry (.getOptions md)))
-          (names [^DescriptorProtos$DescriptorProto md path pred]
-            (let [path (conj path (.getName md))]
-              (concat (when (pred md) [(str/join "." path)])
-                      (mapcat #(names % path pred) (.getNestedTypeList md)))))
-          (walk [^DescriptorProtos$DescriptorProto md path entry-names locals]
-            (let [path (conj path (.getName md))]
-              (cons {:record-name (record-name path)
+          (walk [^DescriptorProtos$DescriptorProto md path locals
+                 ^Descriptors$Descriptor rd]
+            (let [path  (conj path (.getName md))
+                  mname (record-name path)]
+              (cons {:record-name mname
                      :lookup-name (str/join "." path)
                      :java-class  (java-class-name fdp md path)
                      :fields      (mapv (fn [^DescriptorProtos$FieldDescriptorProto f]
-                                          {:proto-name (.getName f)
-                                           :key        (field-key-symbol (.getName f))
-                                           :setter     (str "set" (accessor-suffix (.getName f)))
-                                           :interop    (interop-field-info
-                                                        f (.getPackage fdp)
-                                                        entry-names locals)})
+                                          (let [k (field-key-symbol (.getName f))]
+                                            {:proto-name (.getName f)
+                                             :key        k
+                                             :setter     (str "set" (accessor-suffix (.getName f)))
+                                             :interop    (interop-field-info f locals)
+                                             ;; Spelled out rather than threaded: every
+                                             ;; interop call in this file has to resolve at
+                                             ;; compile time or the native image dies on it.
+                                             :read       (when rd
+                                                           (when-let [rfd (.findFieldByName rd (.getName f))]
+                                                             (read-info rfd locals (str mname "--" k))))}))
                                         (.getFieldList md))}
-                    (mapcat #(walk % path entry-names locals)
+                    (mapcat (fn [^DescriptorProtos$DescriptorProto n]
+                              (walk n path locals
+                                    (when rd (.findNestedTypeByName rd (.getName n)))))
                             (remove map-entry? (.getNestedTypeList md))))))]
-    (let [entry-names (set (mapcat #(names % [] map-entry?)
-                                   (.getMessageTypeList fdp)))
-          ;; Every same-file message by dotted name, with both spellings a
-          ;; field needs: the record whose ->proto converts a map, and the
+    (let [;; Every same-file message by its FULL proto name, with both spellings
+          ;; a field needs: the record whose ->proto converts a map, and the
           ;; Java class that ->proto returns. The class is what lets the
           ;; interop arm hint the call — without it, protoc's builders overload
           ;; setX for the message and its Builder, Clojure cannot pick one at
           ;; compile time, and every message-typed field reflects at run time.
+          pkg         (.getPackage fdp)
           index       (fn index [^DescriptorProtos$DescriptorProto md path]
                         (let [path (conj path (.getName md))]
                           (concat (when-not (map-entry? md)
-                                    [[(str/join "." path)
+                                    [[(str/join "." (if (seq pkg) (cons pkg path) path))
                                       {:record     (record-name path)
                                        :java-class (java-class-name fdp md path)}]])
                                   (mapcat #(index % path) (.getNestedTypeList md)))))
           locals      (into {} (mapcat #(index % []) (.getMessageTypeList fdp)))
-          msgs (vec (mapcat #(walk % [] entry-names locals)
+          msgs (vec (mapcat (fn [^DescriptorProtos$DescriptorProto md]
+                              (walk md [] locals
+                                    (when resolved
+                                      (.findMessageTypeByName resolved (.getName md)))))
                             (remove map-entry? (.getMessageTypeList fdp))))]
       (check-record-names! fdp msgs)
-      msgs)))
+      msgs))))
 
 ;; ---------------------------------------------------------------------------
 ;; emission
@@ -590,16 +803,32 @@
     {:require (proto->ns dep prefix)
      :form    (str (proto->ns dep prefix) "/file-descriptor")}))
 
+(defn- try-resolve
+  "`fdp` as a built FileDescriptor, or nil when it cannot be built here — a file
+  with dependencies, which only the request can supply, or one protoc never
+  validated. Callers with the request use `resolve-files` instead; this is what
+  makes a self-contained descriptor still get the typed read path."
+  ^Descriptors$FileDescriptor [^DescriptorProtos$FileDescriptorProto fdp]
+  (try
+    (Descriptors$FileDescriptor/buildFrom fdp (into-array Descriptors$FileDescriptor []))
+    (catch Throwable _ nil)))
+
 (defn emit-namespace
   "Render one .clj file for `fdp`.
 
   `rt-ns` maps :codec/:runtime/:service to the namespaces the output requires;
-  see default-runtime-namespaces."
+  see default-runtime-namespaces. `resolved` is `fdp` built into a
+  FileDescriptor; it is only consulted for interop=true's typed read path, and
+  the arity without it resolves what it can on its own."
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info?]
    (emit-namespace fdp generated? prefix keep-source-info? default-runtime-namespaces false))
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns]
    (emit-namespace fdp generated? prefix keep-source-info? rt-ns false))
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns interop?]
+   (emit-namespace fdp generated? prefix keep-source-info? rt-ns interop?
+                   (when interop? (try-resolve fdp))))
+  ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns interop?
+    ^Descriptors$FileDescriptor resolved]
   (let [ns-name (proto->ns (.getName fdp) prefix)
         deps    (mapv #(dep-form % generated? prefix) (.getDependencyList fdp))
         ;; protoc ships SourceCodeInfo — every comment and source span — in the
@@ -609,7 +838,11 @@
                   fdp
                   (-> (.toBuilder fdp) (.clearSourceCodeInfo) (.build)))
         b64     (.encodeToString (Base64/getEncoder) (.toByteArray embed))
-        msgs    (message-tree fdp)
+        msgs    (message-tree fdp (when interop? resolved))
+        ;; Which messages need the private map-building read: exactly those some
+        ;; typed read calls for a nested field. Emitting one per message would
+        ;; double the file for nothing.
+        siblings (into #{} (comp (mapcat :fields) (keep (comp :sibling :read))) msgs)
         ;; The type hint is load-bearing, not tidiness. Unhinted, this compiles to
         ;; a reflective call that works fine on the JVM and fails in the native
         ;; image, where no reflection metadata is registered:
@@ -646,12 +879,15 @@
       (line ";; ---------------------------------------------------------------")
       (line ";; messages")
       (when interop?
-        ;; The interop arm calls sibling ->proto fns for message-typed fields,
-        ;; and declaration order is proto order — forward references need
+        ;; The interop arms call sibling fns for message-typed fields — ->proto
+        ;; on the way in, the private map-building read on the way out — and
+        ;; declaration order is proto order, so forward references need
         ;; declaring. The codec arm never references siblings, which is why
         ;; this did not exist before.
         (line (str "(declare "
-                   (str/join " " (map #(str (:record-name %) "->proto") msgs))
+                   (str/join " " (concat (map #(str (:record-name %) "->proto") msgs)
+                                         (map #(str "proto->" % "--map")
+                                              (filter siblings (map :record-name msgs)))))
                    ")")))
       (line ";;")
       (line ";; The shape is known at codegen time, so the representation is too:")
@@ -736,14 +972,106 @@
             (doseq [{:keys [key]} fields]
               (line (str "     (codec/set-field! b " msg-name "--" key " (:" key " m) opts)")))
             (line  "     (.build b))))")))
-        (line (str "(defn proto->" msg-name))
-        (line (str "  \"protobuf -> a " msg-name " record. Absent fields are nil.\""))
-        (line (str "  ([msg] (proto->" msg-name " msg nil))"))
-        (line  "  ([^com.google.protobuf.Message msg opts]")
-        (line (str "   (->" msg-name))
-        (doseq [{:keys [key]} fields]
-          (line (str "    (codec/get-field msg " msg-name "--" key " opts)")))
-        (line  "    )))")))
+        (let [typed-read? (boolean (and interop? java-class (some :read fields)))
+              ;; The codec read of one field, for a field the fast arm cannot
+              ;; spell. `from` is the message local: `m` inside the typed arm.
+              codec-read  (fn [from key opts] (str "(codec/get-field " from " " msg-name "--" key
+                                                   " " opts ")"))]
+          (line (str "(defn proto->" msg-name))
+          (line (str "  \"protobuf -> a " msg-name " record. Absent fields are nil.\""))
+          (line (str "  ([msg] (proto->" msg-name " msg nil))"))
+          (line  "  ([^com.google.protobuf.Message msg opts]")
+          (if typed-read?
+            (do
+              ;; `instance?` and not just `(nil? opts)`, unlike ->proto: this arm
+              ;; reads one concrete class's own accessors, and proto->X accepts
+              ;; any Message. A DynamicMessage — or a message from the compiled
+              ;; codec — must still decode, so the class check is what keeps
+              ;; interop=true a pure optimisation rather than a narrowing of what
+              ;; the fn accepts. It compiles to an instanceof.
+              (line (str "   (if (and (nil? opts) (instance? " java-class " msg))"))
+              (line (str "     (let [^" java-class " m msg]"))
+              (line (str "       (->" msg-name))
+              (doseq [{:keys [key read]} fields]
+                (line (str "        " (or (:expr read) (codec-read "m" key "nil")))))
+              (line  "        ))")
+              (line (str "     (->" msg-name))
+              (doseq [{:keys [key]} fields]
+                (line (str "      " (codec-read "msg" key "opts"))))
+              (line  "      ))))"))
+            (do
+              (line (str "   (->" msg-name))
+              (doseq [{:keys [key]} fields]
+                (line (str "    " (codec-read "msg" key "opts"))))
+              (line  "    )))")))
+          ;; The map-building read, private, emitted only for a message some
+          ;; other message nests. A nested message reads back as a plain map on
+          ;; the codec path — the runtime cannot know the record classes — and a
+          ;; Clojure record is not = to a map with the same keys, so returning
+          ;; records here would break every consumer comparing a decoded value
+          ;; and would put the two arms in disagreement. Records are faster
+          ;; (measurably: 3556 ns against 5033 on a list of small messages) and
+          ;; are a separate, opt-in question.
+          ;; Keyed on being referenced, NOT on this message having a typed read
+          ;; of its own: a message every one of whose fields falls back to the
+          ;; codec — or one with no fields at all — is still a legitimate nested
+          ;; type, and skipping it here would leave the caller with a call to a
+          ;; declared-but-undefined fn.
+          (when (and interop? java-class (contains? siblings msg-name))
+            (let [always (filterv (comp :always? :read) fields)
+                  conds  (filterv (complement (comp :always? :read)) fields)
+                  ;; One entry of the map literal: a field with no absence
+                  ;; inlines its read, a conditional one names the local the
+                  ;; enclosing let bound it to.
+                  pair   (fn [{:keys [key read]}]
+                           (str ":" key " " (if (:always? read) (:expr read) (str key "--v"))))
+                  lit    (fn [fs indent]
+                           (str "{" (str/join (str "\n" (apply str (repeat (inc indent) " ")))
+                                              (map pair fs))
+                                "}"))]
+              (line (str "(defn- proto->" msg-name "--map"))
+              (line (str "  \"" msg-name " as the plain map a nested field reads back as:"))
+              (line  "  the same values, minus the keys the codec's read leaves out.\"")
+              (line (str "  [^" java-class " m]"))
+              (cond
+                ;; Nothing to leave out: one literal, one allocation.
+                (empty? conds)
+                (line (str "  " (lit always 2) ")"))
+
+                :else
+                (do
+                  (line (str "  (let [" (str/join "\n        "
+                                                  (map (fn [{:keys [key read]}]
+                                                         (str key "--v "
+                                                              (or (:expr read) (codec-read "m" key "nil"))))
+                                                       conds))
+                             "]"))
+                  ;; Everything present is the common case and the one worth
+                  ;; spending emitted code on: a literal builds the map in one
+                  ;; allocation, where a chain of `assoc` copies a growing array
+                  ;; per step — measured 72 B against 192 for three fields, and
+                  ;; 216 B against 672 for eight.
+                  (line (str "    (if "
+                             (let [tests (map #(str "(some? " (:key %) "--v)") conds)]
+                               (if (= 1 (count conds))
+                                 (first tests)
+                                 (str "(and " (str/join " " tests) ")")))))
+                  (line (str "      " (lit fields 6)))
+                  (if (= 1 (count conds))
+                    ;; One conditional field: "not all present" IS "absent", so
+                    ;; the other arm is the literal without it.
+                    (line (str "      " (lit always 6) ")))"))
+                    (do
+                      ;; Otherwise a transient: bounded at one map however many
+                      ;; fields are present, where the persistent chain's cost
+                      ;; grows with the square of that number — 1952 B against
+                      ;; 1040 at twelve. It loses ~100 B when almost nothing is
+                      ;; present, which is the trade this takes.
+                      (line  "      (persistent!")
+                      (line (str "       (cond-> (transient " (lit always 24) ")"))
+                      (doseq [{:keys [key]} conds]
+                        (line (str "         (some? " key "--v) (assoc! :" key " " key "--v)")))
+                      (line  "         )))))"))))))))))
 
 
     (when (seq svcs)
@@ -760,6 +1088,32 @@
 ;; ---------------------------------------------------------------------------
 ;; plugin protocol
 
+(defn- resolve-files
+  "Every file in the request as a built FileDescriptor, keyed by proto path.
+
+  This is where feature resolution happens — in protobuf-java, not here. It is
+  the same delegation the emitted file makes at load time, and the only way to
+  answer the questions the typed read path asks: does this field have presence,
+  is this enum open, is this message field really a group. One pass suffices
+  because protoc sends proto_file in topological order.
+
+  A file that will not build gets no entry and simply loses that path. That is
+  not a hypothetical: --descriptor_set_in accepts sets assembled by hand, and a
+  file whose dependency failed cannot be built either. Nothing else in emission
+  depends on this, so a miss costs speed and nothing more."
+  [^PluginProtos$CodeGeneratorRequest req]
+  (reduce (fn [acc ^DescriptorProtos$FileDescriptorProto fdp]
+            (let [deps (mapv acc (.getDependencyList fdp))]
+              (if (some nil? deps)
+                acc
+                (try
+                  (assoc acc (.getName fdp)
+                         (Descriptors$FileDescriptor/buildFrom
+                          fdp (into-array Descriptors$FileDescriptor deps)))
+                  (catch Throwable _ acc)))))
+          {}
+          (.getProtoFileList req)))
+
 (defn generate
   "CodeGeneratorRequest -> CodeGeneratorResponse."
   ^PluginProtos$CodeGeneratorResponse [^PluginProtos$CodeGeneratorRequest req]
@@ -770,13 +1124,18 @@
         rt-ns     (runtime-namespaces params)
         to-gen    (set (.getFileToGenerateList req))
         generated? #(contains? to-gen %)
+        ;; Only interop=true's typed read path consults these, and building them
+        ;; is the one piece of work in this fn proportional to the whole request
+        ;; rather than to the files asked for.
+        resolved  (when interop? (resolve-files req))
         resp      (PluginProtos$CodeGeneratorResponse/newBuilder)]
     (doseq [^DescriptorProtos$FileDescriptorProto fdp (.getProtoFileList req)
             :when (to-gen (.getName fdp))]
       (let [ns-name (proto->ns (.getName fdp) prefix)]
         (.addFile resp (-> (PluginProtos$CodeGeneratorResponse$File/newBuilder)
                            (.setName (ns->path ns-name))
-                           (.setContent (emit-namespace fdp generated? prefix keep-src? rt-ns interop?))
+                           (.setContent (emit-namespace fdp generated? prefix keep-src? rt-ns interop?
+                                                        (get resolved (.getName fdp))))
                            (.build)))))
     (doto resp
       (.setSupportedFeatures
@@ -790,7 +1149,7 @@
   "The released version. Single source of truth: the release workflow asserts
   this equals the tag rather than rewriting it, so a forgotten bump fails the
   release instead of shipping a binary that misreports itself."
-  "0.5.1")
+  "0.6.0")
 
 (defn -main
   "Read a CodeGeneratorRequest on stdin, write a CodeGeneratorResponse on stdout.

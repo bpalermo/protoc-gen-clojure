@@ -1,0 +1,46 @@
+load("//clojure:defs.bzl", "clojure_proto_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# The same fixtures as //test/proto, generated with interop=true.
+#
+# Why a whole second corpus rather than one hand-built descriptor in a unit test:
+# interop=true's fast arms are the only emitted code whose correctness depends on
+# names this plugin DERIVES rather than reads — Java classes, accessors, presence
+# guards. A miss is a compile error in someone else's build, or, for `getClass`,
+# a silently wrong value. The unit tests can pin a shape; only a real proto2 /
+# proto3 / editions matrix can pin the derivation against every syntax at once.
+#
+# It lives in its own package because clojure_proto_library recovers protoc's
+# --clojure_out root by stripping the first declared `outs` path off its own
+# output path: two targets in one package would then aim at the same directory
+# and overwrite each other. The proto_library stays in //test/proto — the rule
+# only reads its ProtoInfo, so it does not need to be local, unlike the srcs of
+# a proto_library itself (see //test/nested_golden).
+
+clojure_proto_library(
+    name = "generated",
+    outs = [
+        "acme/greeter/greeter.clj",
+        "fixtures/bench/shapes.clj",
+        "fixtures/e2023/kitchen.clj",
+        "fixtures/e2024/kitchen.clj",
+        "fixtures/e2024legacy/legacy_style.clj",
+        "fixtures/p2/kitchen.clj",
+        "fixtures/p3/kitchen.clj",
+    ],
+    options = {"interop": "true"},
+    plugin = "//src/protoc_gen_clojure:protoc_gen_clojure_jvm",
+    proto = "//test/proto:fixtures_proto",
+)
+
+# Nested messages, which no file under //test/proto has: the interop arms name a
+# sibling per message-typed field, and a nested type's is Outer-Inner against a
+# Java class of Outer$Inner. Its proto_library is declared where its srcs are.
+clojure_proto_library(
+    name = "generated_nested",
+    outs = ["fixtures/nested/nested.clj"],
+    options = {"interop": "true"},
+    plugin = "//src/protoc_gen_clojure:protoc_gen_clojure_jvm",
+    proto = "//test/nested_golden:nested_proto",
+)

@@ -22,6 +22,7 @@ generate a `.clj` file.
 | `test/plugin_test.clj` | Unit tests for the protocol and the emitter. |
 | `test/proto/` | Fixture protos (proto2, proto3, editions 2023/2024) + generation target. |
 | `test/golden/` | Checked-in expected output. Generated, not hand-written. |
+| `test/golden_interop/` | The same corpus under `interop=true`, from `//test/interop_golden`. |
 | `MODULE.bazel` | Dependency split is load-bearing — see below. |
 | `docs/` | Generated Stardoc API reference. Do not hand-edit; see below. |
 
@@ -41,7 +42,7 @@ bazel build //...                          # everything
 bazel test  //...                          # everything
 
 bazel test  //test:plugin_test             # emitter + protocol unit tests
-bazel test  //test:golden_test             # emission regression
+bazel test  //test:update_golden_tests     # emission regression, both golden trees
 bazel test  //test:sandbox_conformance_test # BSR purity check
 bazel run   //test:update_golden           # refresh goldens after an intended change
 
@@ -80,6 +81,16 @@ verbatim (base64) and lets protobuf-java's `FileDescriptor/buildFrom` resolve
 edition features at load time. That's why a new edition needs no codegen change.
 Keep it that way.
 
+That rule is about not owning a defaults table, not about never seeing a resolved
+descriptor. `interop=true`'s typed read path has to know, at codegen time, whether
+a field has presence and whether an enum is open — emit `(when (.hasX m) …)` where
+protoc generated no hasser and the output does not compile; omit it where protoc
+did and absence silently reads back as a default. So `resolve-files` hands the
+request's files to the same `FileDescriptor/buildFrom` and asks *it*
+(`hasPresence`, `isClosed`). A file that will not build simply gets no typed read
+arm. Deriving those answers from syntax and label instead — the tempting
+shortcut — is what would break on the next edition.
+
 **Never hardcode a maximum edition.** `max-supported-edition` *probes* the linked
 protobuf-java by trying to build a descriptor at each edition, descending.
 Bumping `protobuf-java` in `MODULE.bazel` raises it automatically. Enum
@@ -88,10 +99,17 @@ resolve it. Hardcoding is the exact bug that stranded protoc's own C++ plugins
 when edition 2024 shipped.
 
 **Editions and generated output are pinned by tests.** `//test:plugin_test`
-asserts the advertised window; `//test:golden_test` diffs generated output
-against `test/golden/`. If you intend an emitter change, run
-`bazel run //test:update_golden` and review the resulting diff — that diff *is*
-the change. Don't hand-edit files under `test/golden/`.
+asserts the advertised window; `//test:update_golden_tests` diff generated output
+against `test/golden/` and `test/golden_interop/`. If you intend an emitter
+change, run `bazel run //test:update_golden` and review the resulting diff — that
+diff *is* the change. Don't hand-edit files under either golden tree.
+
+`test/golden_interop/` exists because the `interop=true` arms are the only emitted
+code built from names this plugin DERIVES rather than reads — Java classes,
+accessors, presence guards — and those differ per syntax, so only a proto2 /
+proto3 / editions matrix pins them. `//test:distribution_test` runs `interop=true`
+through the NATIVE binary for the same reason the rest of it exists: an unhinted
+interop call works on the JVM and dies in the image.
 
 **`clojure/versions.bzl` is deliberately empty in git.** The native binaries are
 built by the same release that publishes the module, so their checksums can't

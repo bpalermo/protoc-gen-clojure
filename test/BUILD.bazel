@@ -106,6 +106,12 @@ sh_binary(
 # The mapping is keyed on the same paths //test/proto:generated declares, so a
 # proto added there without a golden fails at analysis instead of being skipped —
 # which is what the hand-rolled version needed an explicit count check to catch.
+#
+# golden_interop/ is the same corpus under interop=true. It is not redundant with
+# golden/: the two files share only their descriptor, and everything the interop
+# arms add is a name this plugin DERIVES rather than reads — a Java class, an
+# accessor, a presence guard. Those are exactly the mistakes a diff catches and a
+# unit test's hand-built descriptor cannot, because they differ per syntax.
 write_source_files(
     name = "update_golden",
     files = {
@@ -118,5 +124,13 @@ write_source_files(
         "golden/fixtures/nested/nested.clj": "//test/nested_golden:fixtures/nested/nested.clj",
         "golden/fixtures/p2/kitchen.clj": "//test/proto:fixtures/p2/kitchen.clj",
         "golden/fixtures/p3/kitchen.clj": "//test/proto:fixtures/p3/kitchen.clj",
+        "golden_interop/acme/greeter/greeter.clj": "//test/interop_golden:acme/greeter/greeter.clj",
+        "golden_interop/fixtures/bench/shapes.clj": "//test/interop_golden:fixtures/bench/shapes.clj",
+        "golden_interop/fixtures/e2023/kitchen.clj": "//test/interop_golden:fixtures/e2023/kitchen.clj",
+        "golden_interop/fixtures/e2024/kitchen.clj": "//test/interop_golden:fixtures/e2024/kitchen.clj",
+        "golden_interop/fixtures/e2024legacy/legacy_style.clj": "//test/interop_golden:fixtures/e2024legacy/legacy_style.clj",
+        "golden_interop/fixtures/nested/nested.clj": "//test/interop_golden:fixtures/nested/nested.clj",
+        "golden_interop/fixtures/p2/kitchen.clj": "//test/interop_golden:fixtures/p2/kitchen.clj",
+        "golden_interop/fixtures/p3/kitchen.clj": "//test/interop_golden:fixtures/p3/kitchen.clj",
     },
 )

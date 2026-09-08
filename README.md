@@ -45,7 +45,7 @@ Download a binary for your platform from
 `protoc-gen-<name>`, and that is what makes `--clojure_out` work:
 
 ```sh
-VERSION=0.5.1
+VERSION=0.6.0
 curl -fsSLo protoc-gen-clojure \
   "https://github.com/bpalermo/protoc-gen-clojure/releases/download/v$VERSION/protoc-gen-clojure_${VERSION}_linux_x86_64"
 chmod +x protoc-gen-clojure && mv protoc-gen-clojure /usr/local/bin/
@@ -113,7 +113,7 @@ prebuilt native binary for the host platform.
 
 ```starlark
 # MODULE.bazel
-bazel_dep(name = "protoc_gen_clojure", version = "0.5.1")
+bazel_dep(name = "protoc_gen_clojure", version = "0.6.0")
 
 plugin = use_extension("@protoc_gen_clojure//clojure:extensions.bzl", "toolchains")
 use_repo(plugin, "protoc_gen_clojure_toolchains")
@@ -155,7 +155,7 @@ Comma-separated, as `--clojure_out=key=value,key2=value2:DIR`, or via
 |---|---|
 | `ns_prefix=foo` | prefix every generated namespace with `foo.` |
 | `keep_source_info=true` | embed `SourceCodeInfo` (comments and spans). Off by default: it dominates the payload and is useless at runtime. |
-| `interop=true` | emit a typed-interop fast path in each `X->proto`, taken when `opts` is nil — measured ~30–40% on scalar-heavy messages. The generated namespace then **requires protoc's Java classes on the classpath at load**; enum/repeated/map fields and every non-nil-opts call keep the codec path bit-for-bit. Off by default. |
+| `interop=true` | emit typed fast paths in both directions — `X->proto` when `opts` is nil, `proto->X` when `opts` is nil and the message is the generated class. Measured ~30–40% faster on scalar-heavy writes, and 2–3x faster on reads of small and nested messages, where the typed read builds no intermediate map at all. The generated namespace then **requires protoc's Java classes on the classpath at load**, and the file grows by roughly the size of its conversion fns. Anything the fast path cannot spell — groups, cross-file message fields, aliased or collection-valued enums — stays on the codec inline, and every non-nil-opts call keeps the codec path bit-for-bit. Off by default. |
 | `codec_ns=…` | namespace providing `set-field!` / `get-field`. Default `clj-protobuf.codec`. |
 | `runtime_ns=…` | namespace providing `file-descriptor` / `message` / `field`. Default `clj-protobuf.runtime`. |
 | `service_ns=…` | namespace providing `service` / `methods-map`. Default `clj-grpc.service`. |
