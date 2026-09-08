@@ -317,6 +317,18 @@ jobs:
   release:
     needs: [check, native, distribution]
     permissions:
+      # actions: read is what lets release_prep.sh's caller see the four native
+      # binaries. release_ruleset runs actions/download-artifact with no `name`,
+      # which lists every artifact of the run through the REST API, and listing
+      # needs this scope — downloading one by name, as the `distribution` job
+      # does, goes through the internal artifact service and does not. An
+      # explicit permissions block sets every scope it omits to `none`, so
+      # omitting it here was the same as denying it, and v0.6.0's release failed
+      # on "Failed to ListArtifacts: (403) Forbidden" after all four builds and
+      # the whole test suite had passed. The identical config released 0.5.1 two
+      # days earlier, so the enforcement changed under us rather than the
+      # workflow.
+      actions: read
       contents: write
       id-token: write
       attestations: write
