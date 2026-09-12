@@ -46,10 +46,18 @@
   "protobuf -> a legacyStyleMessage record. Absent fields are nil."
   ([msg] (proto->legacyStyleMessage msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->legacyStyleMessage
-    (codec/get-field msg legacyStyleMessage--camel-case-field opts)
-    (codec/get-field msg legacyStyleMessage--upper-snake-field opts)
-    (codec/get-field msg legacyStyleMessage--already-snake opts)
-    (codec/get-field msg legacyStyleMessage--x opts)
-    (codec/get-field msg legacyStyleMessage--http2-server opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->legacyStyleMessage
+      (rt/slot msg 0)
+      (rt/slot msg 1)
+      (rt/slot msg 2)
+      (rt/slot msg 3)
+      (rt/slot msg 4)
+      )
+     (->legacyStyleMessage
+      (codec/get-field msg legacyStyleMessage--camel-case-field opts)
+      (codec/get-field msg legacyStyleMessage--upper-snake-field opts)
+      (codec/get-field msg legacyStyleMessage--already-snake opts)
+      (codec/get-field msg legacyStyleMessage--x opts)
+      (codec/get-field msg legacyStyleMessage--http2-server opts)
+      ))))

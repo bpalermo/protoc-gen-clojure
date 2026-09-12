@@ -16,7 +16,7 @@
 
 ;; ---------------------------------------------------------------
 ;; messages
-(declare Outer->proto Outer-Inner->proto Outer-Inner-Innermost->proto Inner->proto proto->Outer-Inner--map proto->Outer-Inner-Innermost--map)
+(declare Outer->proto Outer-Inner->proto Outer-Inner-Innermost->proto Inner->proto proto->Outer-Inner--map proto->Outer-Inner-Innermost--map proto->Outer-Inner--slot-map proto->Outer-Inner-Innermost--slot-map)
 ;;
 ;; The shape is known at codegen time, so the representation is too:
 ;; a defrecord per type, its FieldDescriptors resolved once into
@@ -49,13 +49,23 @@
   "protobuf -> a Outer record. Absent fields are nil."
   ([msg] (proto->Outer msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.nested.Outer msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.nested.Outer msg))
      (let [^com.acme.fixtures.nested.Outer m msg]
        (->Outer
         (.getId m)
         (let [jm (.getCountsMap m)] (when-not (.isEmpty jm) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
         (when (.hasInner m) (proto->Outer-Inner--map (.getInner m)))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Outer
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      (let [^java.util.Map jm (rt/slot msg 1)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+      (when-some [v (rt/slot msg 2)] (proto->Outer-Inner--slot-map v))
+      )
+
+     :else
      (->Outer
       (codec/get-field msg Outer--id opts)
       (codec/get-field msg Outer--counts opts)
@@ -87,13 +97,23 @@
   "protobuf -> a Outer-Inner record. Absent fields are nil."
   ([msg] (proto->Outer-Inner msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.nested.Outer$Inner msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.nested.Outer$Inner msg))
      (let [^com.acme.fixtures.nested.Outer$Inner m msg]
        (->Outer-Inner
         (.getName m)
         (let [jm (.getLabelsMap m)] (when-not (.isEmpty jm) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
         (when (.hasInnermost m) (proto->Outer-Inner-Innermost--map (.getInnermost m)))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Outer-Inner
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      (let [^java.util.Map jm (rt/slot msg 1)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+      (when-some [v (rt/slot msg 2)] (proto->Outer-Inner-Innermost--slot-map v))
+      )
+
+     :else
      (->Outer-Inner
       (codec/get-field msg Outer-Inner--name opts)
       (codec/get-field msg Outer-Inner--labels opts)
@@ -111,6 +131,21 @@
        :innermost innermost--v}
       (persistent!
        (cond-> (transient {:name (.getName m)})
+         (some? labels--v) (assoc! :labels labels--v)
+         (some? innermost--v) (assoc! :innermost innermost--v)
+         )))))
+(defn- proto->Outer-Inner--slot-map
+  "Outer-Inner as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  (let [labels--v (let [^java.util.Map jm (rt/slot msg 1)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+        innermost--v (when-some [v (rt/slot msg 2)] (proto->Outer-Inner-Innermost--slot-map v))]
+    (if (and (some? labels--v) (some? innermost--v))
+      {:name (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+       :labels labels--v
+       :innermost innermost--v}
+      (persistent!
+       (cond-> (transient {:name (let [v (rt/slot msg 0)] (if (nil? v) "" v))})
          (some? labels--v) (assoc! :labels labels--v)
          (some? innermost--v) (assoc! :innermost innermost--v)
          )))))
@@ -134,11 +169,19 @@
   "protobuf -> a Outer-Inner-Innermost record. Absent fields are nil."
   ([msg] (proto->Outer-Inner-Innermost msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.nested.Outer$Inner$Innermost msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.nested.Outer$Inner$Innermost msg))
      (let [^com.acme.fixtures.nested.Outer$Inner$Innermost m msg]
        (->Outer-Inner-Innermost
         (.getDepth m)
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Outer-Inner-Innermost
+      (let [v (rt/slot msg 0)] (if (nil? v) (int 0) v))
+      )
+
+     :else
      (->Outer-Inner-Innermost
       (codec/get-field msg Outer-Inner-Innermost--depth opts)
       ))))
@@ -147,6 +190,11 @@
   the same values, minus the keys the codec's read leaves out."
   [^com.acme.fixtures.nested.Outer$Inner$Innermost m]
   {:depth (.getDepth m)})
+(defn- proto->Outer-Inner-Innermost--slot-map
+  "Outer-Inner-Innermost as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  {:depth (let [v (rt/slot msg 0)] (if (nil? v) (int 0) v))})
 
 (defrecord Inner [unrelated])
 (def Inner-prototype (rt/message file-descriptor "Inner" "com.acme.fixtures.nested.Inner"))
@@ -167,11 +215,19 @@
   "protobuf -> a Inner record. Absent fields are nil."
   ([msg] (proto->Inner msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.nested.Inner msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.nested.Inner msg))
      (let [^com.acme.fixtures.nested.Inner m msg]
        (->Inner
         (.getUnrelated m)
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Inner
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      )
+
+     :else
      (->Inner
       (codec/get-field msg Inner--unrelated opts)
       ))))

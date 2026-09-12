@@ -50,13 +50,23 @@
   "protobuf -> a HelloRequest record. Absent fields are nil."
   ([msg] (proto->HelloRequest msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.greeter.HelloRequest msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.greeter.HelloRequest msg))
      (let [^com.acme.greeter.HelloRequest m msg]
        (->HelloRequest
         (when (.hasName m) (.getName m))
         (when (.hasRepeatCount m) (.getRepeatCount m))
         (when (.hasGreeting m) (case (.getGreetingValue m) 0 :GREETING_UNSPECIFIED 1 :GREETING_HELLO 2 :GREETING_HOWDY (codec/get-field m HelloRequest--greeting nil)))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->HelloRequest
+      (rt/slot msg 0)
+      (rt/slot msg 1)
+      (when-some [v (rt/slot msg 2)] (case v 0 :GREETING_UNSPECIFIED 1 :GREETING_HELLO 2 :GREETING_HOWDY (codec/get-field msg HelloRequest--greeting nil)))
+      )
+
+     :else
      (->HelloRequest
       (codec/get-field msg HelloRequest--name opts)
       (codec/get-field msg HelloRequest--repeat-count opts)
@@ -82,11 +92,19 @@
   "protobuf -> a HelloReply record. Absent fields are nil."
   ([msg] (proto->HelloReply msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.greeter.HelloReply msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.greeter.HelloReply msg))
      (let [^com.acme.greeter.HelloReply m msg]
        (->HelloReply
         (when (.hasMessage m) (.getMessage m))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->HelloReply
+      (rt/slot msg 0)
+      )
+
+     :else
      (->HelloReply
       (codec/get-field msg HelloReply--message opts)
       ))))

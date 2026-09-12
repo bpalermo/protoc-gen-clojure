@@ -43,11 +43,17 @@
   "protobuf -> a HelloRequest record. Absent fields are nil."
   ([msg] (proto->HelloRequest msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->HelloRequest
-    (codec/get-field msg HelloRequest--name opts)
-    (codec/get-field msg HelloRequest--repeat-count opts)
-    (codec/get-field msg HelloRequest--greeting opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->HelloRequest
+      (rt/slot msg 0)
+      (rt/slot msg 1)
+      (when-some [v (rt/slot msg 2)] (case v 0 :GREETING_UNSPECIFIED 1 :GREETING_HELLO 2 :GREETING_HOWDY (codec/get-field msg HelloRequest--greeting nil)))
+      )
+     (->HelloRequest
+      (codec/get-field msg HelloRequest--name opts)
+      (codec/get-field msg HelloRequest--repeat-count opts)
+      (codec/get-field msg HelloRequest--greeting opts)
+      ))))
 
 (defrecord HelloReply [message])
 (def HelloReply-prototype (rt/message file-descriptor "HelloReply" "com.acme.greeter.HelloReply"))
@@ -64,9 +70,13 @@
   "protobuf -> a HelloReply record. Absent fields are nil."
   ([msg] (proto->HelloReply msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->HelloReply
-    (codec/get-field msg HelloReply--message opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->HelloReply
+      (rt/slot msg 0)
+      )
+     (->HelloReply
+      (codec/get-field msg HelloReply--message opts)
+      ))))
 
 ;; services — pass the service value to your server, the methods to a client
 (def Greeter (rts/service file-descriptor "Greeter"))

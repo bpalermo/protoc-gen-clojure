@@ -203,10 +203,15 @@
                      (.addValue (enum-value "KIND_UNSPECIFIED" 0))
                      (.addValue (enum-value "KIND_THING" 1))))
                 (.build))]
-    (testing "off by default: not a character of interop in the output"
+    (testing "off by default: no typed Java in the output. The COMPILED arm's
+              typed read is emitted either way — it needs no generated class —
+              so the marker is the Java class, not the shape"
       (let [out (plugin/emit-namespace fdp (constantly false) nil false)]
         (is (not (str/includes? out "newBuilder)")))
-        (is (not (str/includes? out "when-some")))))
+        (is (not (str/includes? out "instance? com.demo.Thing")))
+        (is (not (str/includes? out "com.demo.Thing m"))
+            "and above all no Java class in a type hint, which would be resolved
+             at load and put protoc's output on every consumer's classpath")))
     (testing "on: typed setters for singular scalar/string/bytes, guarded on nil opts"
       (let [out (plugin/emit-namespace fdp (constantly false) nil false
                                        plugin/default-runtime-namespaces true)]
@@ -231,7 +236,7 @@
         (testing "and the READ arm: typed getters, the class checked because
                   proto->X takes any Message and this arm reads one class's own
                   accessors"
-          (is (str/includes? out "(if (and (nil? opts) (instance? com.demo.Thing msg))"))
+          (is (str/includes? out "     (and (nil? opts) (instance? com.demo.Thing msg))"))
           (is (str/includes? out "(let [^com.demo.Thing m msg]"))
           (testing "edition 2024 is field_presence = EXPLICIT, so every singular
                     read is guarded — a fact only a resolved descriptor carries"
@@ -477,6 +482,88 @@
       (is (str/includes? out "(if (some? only--v)"))
       (is (not (str/includes? out "(assoc! :only only--v)"))))
     (is (pos? (count (read-forms out))))))
+
+(deftest compiled-arm-typed-read
+  ;; The default emission from 0.7.0: a consumer with no generated Java still
+  ;; gets a typed read, off clj-protobuf's compiled message's slot array. This
+  ;; is what sets the 0.3.0 runtime floor for every regenerated file, so the
+  ;; shape is worth pinning here as well as in the goldens.
+  (let [fdp (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                (.setName "demo/thing.proto")
+                (.setPackage "demo")
+                (.setSyntax "proto3")
+                (.addMessageType
+                 (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                     (.setName "Thing")
+                     (.addField (field "name" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1))
+                     (.addField (field "count" DescriptorProtos$FieldDescriptorProto$Type/TYPE_INT32 2))
+                     (.addField (field "payload" DescriptorProtos$FieldDescriptorProto$Type/TYPE_BYTES 3))
+                     (.addField (-> (field "kind" DescriptorProtos$FieldDescriptorProto$Type/TYPE_ENUM 4)
+                                    (.setTypeName ".demo.Kind")))
+                     (.addField (-> (field "child" DescriptorProtos$FieldDescriptorProto$Type/TYPE_MESSAGE 5)
+                                    (.setTypeName ".demo.Thing")))
+                     (.addField (-> (field "tags" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 6)
+                                    (.setLabel DescriptorProtos$FieldDescriptorProto$Label/LABEL_REPEATED)))))
+                (.addEnumType
+                 (-> (DescriptorProtos$EnumDescriptorProto/newBuilder)
+                     (.setName "Kind")
+                     (.addValue (enum-value "KIND_UNSPECIFIED" 0))
+                     (.addValue (enum-value "KIND_THING" 1))))
+                (.build))
+        out (plugin/emit-namespace fdp (constantly false) nil false)]
+    (testing "guarded on the runtime's own predicate, because rt/slot does not
+              check and a message from another arm throws rather than answers"
+      (is (str/includes? out "(if (and (nil? opts) (rt/compiled-message? msg))")))
+
+    (testing "the slot index is the field's position, baked as a literal"
+      (is (str/includes? out "(rt/slot msg 0)"))
+      (is (str/includes? out "(rt/slot msg 5)")))
+
+    (testing "proto3 IMPLICIT presence has no absence, so a nil slot is the
+              default — and the default's TYPE matters, since the codec hands
+              back protobuf-java's Integer rather than a Clojure long"
+      (is (str/includes? out "(let [v (rt/slot msg 0)] (if (nil? v) \"\" v))"))
+      (is (str/includes? out "(let [v (rt/slot msg 1)] (if (nil? v) (int 0) v))"))
+      (is (str/includes? out "(if (nil? v) :KIND_UNSPECIFIED"))
+      (is (str/includes? out "(if (nil? v) (byte-array 0)")))
+
+    (testing "a message field always has presence, and reads through the slot
+              sibling — which takes the nested COMPILED message, so it hints
+              nothing and needs no Java class"
+      (is (str/includes? out "(when-some [v (rt/slot msg 4)] (proto->Thing--slot-map v))"))
+      (is (str/includes? out "(defn- proto->Thing--slot-map"))
+      (is (str/includes? out "\n  [msg]\n")))
+
+    (testing "repeated reads as a vector, nil when empty — a nil slot and an
+              empty list mean the same thing to the codec"
+      (is (str/includes? out "(let [^java.util.List l (rt/slot msg 5)] (when (and l (pos? (.size l))) (vec l)))")))
+
+    (testing "nothing in the emitted code hints a class clj-protobuf defines —
+              generated code that did would break on that library's plain-clj
+              leg, where its namespaces reload in one JVM"
+      (is (not (re-find #"\^clj[-_]protobuf" out))))
+
+    (is (pos? (count (read-forms out))))))
+
+(deftest slot-indices-are-checked-against-the-descriptor
+  ;; The emitter bakes a field's POSITION in the descriptor proto as its slot;
+  ;; clj-protobuf's contract is the DECLARATION INDEX protobuf-java reports.
+  ;; Comparing the two is a real check because they are two sources for one
+  ;; number — which is why clj-protobuf declined the mirror assertion at handle
+  ;; construction, where the value would be compared against itself.
+  (let [rd (.findMessageTypeByName
+            (#'plugin/try-resolve
+             (-> (DescriptorProtos$FileDescriptorProto/newBuilder)
+                 (.setName "demo/thing.proto")
+                 (.addMessageType (-> (DescriptorProtos$DescriptorProto/newBuilder)
+                                      (.setName "Thing")
+                                      (.addField (field "a" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 1))
+                                      (.addField (field "b" DescriptorProtos$FieldDescriptorProto$Type/TYPE_STRING 2))))
+                 (.build)))
+            "Thing")]
+    (testing "a descriptor whose declaration indices are 0..n-1 passes"
+      (is (nil? (#'plugin/check-slot-indices!
+                 (DescriptorProtos$FileDescriptorProto/getDefaultInstance) "Thing" rd))))))
 
 (deftest runtime-namespaces-are-configurable
   ;; The requires this emits are the real public API — they are written into every

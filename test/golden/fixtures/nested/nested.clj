@@ -16,6 +16,7 @@
 
 ;; ---------------------------------------------------------------
 ;; messages
+(declare proto->Outer-Inner--slot-map proto->Outer-Inner-Innermost--slot-map)
 ;;
 ;; The shape is known at codegen time, so the representation is too:
 ;; a defrecord per type, its FieldDescriptors resolved once into
@@ -42,11 +43,17 @@
   "protobuf -> a Outer record. Absent fields are nil."
   ([msg] (proto->Outer msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->Outer
-    (codec/get-field msg Outer--id opts)
-    (codec/get-field msg Outer--counts opts)
-    (codec/get-field msg Outer--inner opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->Outer
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      (let [^java.util.Map jm (rt/slot msg 1)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+      (when-some [v (rt/slot msg 2)] (proto->Outer-Inner--slot-map v))
+      )
+     (->Outer
+      (codec/get-field msg Outer--id opts)
+      (codec/get-field msg Outer--counts opts)
+      (codec/get-field msg Outer--inner opts)
+      ))))
 
 (defrecord Outer-Inner [name labels innermost])
 (def Outer-Inner-prototype (rt/message file-descriptor "Outer.Inner" "com.acme.fixtures.nested.Outer$Inner"))
@@ -67,11 +74,32 @@
   "protobuf -> a Outer-Inner record. Absent fields are nil."
   ([msg] (proto->Outer-Inner msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->Outer-Inner
-    (codec/get-field msg Outer-Inner--name opts)
-    (codec/get-field msg Outer-Inner--labels opts)
-    (codec/get-field msg Outer-Inner--innermost opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->Outer-Inner
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      (let [^java.util.Map jm (rt/slot msg 1)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+      (when-some [v (rt/slot msg 2)] (proto->Outer-Inner-Innermost--slot-map v))
+      )
+     (->Outer-Inner
+      (codec/get-field msg Outer-Inner--name opts)
+      (codec/get-field msg Outer-Inner--labels opts)
+      (codec/get-field msg Outer-Inner--innermost opts)
+      ))))
+(defn- proto->Outer-Inner--slot-map
+  "Outer-Inner as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  (let [labels--v (let [^java.util.Map jm (rt/slot msg 1)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+        innermost--v (when-some [v (rt/slot msg 2)] (proto->Outer-Inner-Innermost--slot-map v))]
+    (if (and (some? labels--v) (some? innermost--v))
+      {:name (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+       :labels labels--v
+       :innermost innermost--v}
+      (persistent!
+       (cond-> (transient {:name (let [v (rt/slot msg 0)] (if (nil? v) "" v))})
+         (some? labels--v) (assoc! :labels labels--v)
+         (some? innermost--v) (assoc! :innermost innermost--v)
+         )))))
 
 (defrecord Outer-Inner-Innermost [depth])
 (def Outer-Inner-Innermost-prototype (rt/message file-descriptor "Outer.Inner.Innermost" "com.acme.fixtures.nested.Outer$Inner$Innermost"))
@@ -88,9 +116,18 @@
   "protobuf -> a Outer-Inner-Innermost record. Absent fields are nil."
   ([msg] (proto->Outer-Inner-Innermost msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->Outer-Inner-Innermost
-    (codec/get-field msg Outer-Inner-Innermost--depth opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->Outer-Inner-Innermost
+      (let [v (rt/slot msg 0)] (if (nil? v) (int 0) v))
+      )
+     (->Outer-Inner-Innermost
+      (codec/get-field msg Outer-Inner-Innermost--depth opts)
+      ))))
+(defn- proto->Outer-Inner-Innermost--slot-map
+  "Outer-Inner-Innermost as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  {:depth (let [v (rt/slot msg 0)] (if (nil? v) (int 0) v))})
 
 (defrecord Inner [unrelated])
 (def Inner-prototype (rt/message file-descriptor "Inner" "com.acme.fixtures.nested.Inner"))
@@ -107,6 +144,10 @@
   "protobuf -> a Inner record. Absent fields are nil."
   ([msg] (proto->Inner msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->Inner
-    (codec/get-field msg Inner--unrelated opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->Inner
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      )
+     (->Inner
+      (codec/get-field msg Inner--unrelated opts)
+      ))))

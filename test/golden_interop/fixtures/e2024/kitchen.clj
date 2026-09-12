@@ -18,7 +18,7 @@
 
 ;; ---------------------------------------------------------------
 ;; messages
-(declare Nested->proto Delimited->proto Kitchen->proto NestedInFileClass->proto proto->Nested--map)
+(declare Nested->proto Delimited->proto Kitchen->proto NestedInFileClass->proto proto->Nested--map proto->Nested--slot-map proto->Delimited--slot-map)
 ;;
 ;; The shape is known at codegen time, so the representation is too:
 ;; a defrecord per type, its FieldDescriptors resolved once into
@@ -45,11 +45,19 @@
   "protobuf -> a Nested record. Absent fields are nil."
   ([msg] (proto->Nested msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.e2024.Nested msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.e2024.Nested msg))
      (let [^com.acme.fixtures.e2024.Nested m msg]
        (->Nested
         (when (.hasId m) (.getId m))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Nested
+      (rt/slot msg 0)
+      )
+
+     :else
      (->Nested
       (codec/get-field msg Nested--id opts)
       ))))
@@ -58,6 +66,14 @@
   the same values, minus the keys the codec's read leaves out."
   [^com.acme.fixtures.e2024.Nested m]
   (let [id--v (when (.hasId m) (.getId m))]
+    (if (some? id--v)
+      {:id id--v}
+      {})))
+(defn- proto->Nested--slot-map
+  "Nested as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  (let [id--v (rt/slot msg 0)]
     (if (some? id--v)
       {:id id--v}
       {})))
@@ -81,14 +97,30 @@
   "protobuf -> a Delimited record. Absent fields are nil."
   ([msg] (proto->Delimited msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.e2024.Delimited msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.e2024.Delimited msg))
      (let [^com.acme.fixtures.e2024.Delimited m msg]
        (->Delimited
         (when (.hasNote m) (.getNote m))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Delimited
+      (rt/slot msg 0)
+      )
+
+     :else
      (->Delimited
       (codec/get-field msg Delimited--note opts)
       ))))
+(defn- proto->Delimited--slot-map
+  "Delimited as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  (let [note--v (rt/slot msg 0)]
+    (if (some? note--v)
+      {:note note--v}
+      {})))
 
 (defrecord Kitchen [str-field int-field bool-field bytes-field dbl-field long-field enum-field msg-field tags children counts choice-str choice-int choice-msg ts dur wrapped implicit-field delimited])
 (def Kitchen-prototype (rt/message file-descriptor "Kitchen" "com.acme.fixtures.e2024.Kitchen"))
@@ -163,7 +195,8 @@
   "protobuf -> a Kitchen record. Absent fields are nil."
   ([msg] (proto->Kitchen msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.e2024.Kitchen msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.e2024.Kitchen msg))
      (let [^com.acme.fixtures.e2024.Kitchen m msg]
        (->Kitchen
         (when (.hasStrField m) (.getStrField m))
@@ -186,6 +219,31 @@
         (.getImplicitField m)
         (codec/get-field m Kitchen--delimited nil)
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->Kitchen
+      (rt/slot msg 0)
+      (rt/slot msg 1)
+      (rt/slot msg 2)
+      (when-some [v (rt/slot msg 3)] (.toByteArray ^com.google.protobuf.ByteString v))
+      (rt/slot msg 4)
+      (rt/slot msg 5)
+      (when-some [v (rt/slot msg 6)] (case v 0 :COLOR_UNSPECIFIED 1 :COLOR_RED 2 :COLOR_BLUE (codec/get-field msg Kitchen--enum-field nil)))
+      (when-some [v (rt/slot msg 7)] (proto->Nested--slot-map v))
+      (let [^java.util.List l (rt/slot msg 8)] (when (and l (pos? (.size l))) (vec l)))
+      (let [^java.util.List l (rt/slot msg 9)] (when (and l (pos? (.size l))) (persistent! (reduce (fn [acc v] (conj! acc (proto->Nested--slot-map v))) (transient []) l))))
+      (let [^java.util.Map jm (rt/slot msg 10)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+      (rt/slot msg 11)
+      (rt/slot msg 12)
+      (when-some [v (rt/slot msg 13)] (proto->Nested--slot-map v))
+      (codec/get-field msg Kitchen--ts nil)
+      (codec/get-field msg Kitchen--dur nil)
+      (codec/get-field msg Kitchen--wrapped nil)
+      (let [v (rt/slot msg 17)] (if (nil? v) "" v))
+      (when-some [v (rt/slot msg 18)] (proto->Delimited--slot-map v))
+      )
+
+     :else
      (->Kitchen
       (codec/get-field msg Kitchen--str-field opts)
       (codec/get-field msg Kitchen--int-field opts)
@@ -227,11 +285,19 @@
   "protobuf -> a NestedInFileClass record. Absent fields are nil."
   ([msg] (proto->NestedInFileClass msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.e2024.KitchenProto$NestedInFileClass msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.e2024.KitchenProto$NestedInFileClass msg))
      (let [^com.acme.fixtures.e2024.KitchenProto$NestedInFileClass m msg]
        (->NestedInFileClass
         (when (.hasId m) (.getId m))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->NestedInFileClass
+      (rt/slot msg 0)
+      )
+
+     :else
      (->NestedInFileClass
       (codec/get-field msg NestedInFileClass--id opts)
       ))))
