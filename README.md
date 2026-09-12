@@ -160,6 +160,22 @@ Comma-separated, as `--clojure_out=key=value,key2=value2:DIR`, or via
 | `runtime_ns=…` | namespace providing `file-descriptor` / `message` / `field`. Default `clj-protobuf.runtime`. |
 | `service_ns=…` | namespace providing `service` / `methods-map`. Default `clj-grpc.service`. |
 
+**When to turn `interop=true` on.** It types both directions, and what that is
+worth depends on how much of the request is the message. Measured on clj-grpc's
+1 KB echo — its `docs/soak-results.md`, "Levers, each measured separately" — for
+**streaming**: +23% capacity and −22% CPU per message on a one-core host, −11%
+under load on four cores. For **unary**: CPU is nil, 0–4%, the replicate floor.
+A unary call is mostly grpc-java's per-call machinery, where the typed path is a
+small share; a streamed message is mostly codec and copies, where it is a large
+one. Latency improves in both — p50 is 9–45% lower across those measurements.
+
+So: turn it on for streaming services, or any handler where the message is most
+of the work. On unary services take it for the latency, not for the capacity.
+The cost is in the build, not the code — the generated namespace requires
+protoc's Java classes at load, so the consumer has to compile them, a
+`java_proto_library` alongside the `clojure_proto_library(options = {"interop":
+"true"})`.
+
 The three `*_ns` options exist because **the requires in generated code are this
 plugin's real public API**. They are written into every emitted file, so a project
 with generated code checked in is coupled to those names. Overriding them lets a
