@@ -55,7 +55,8 @@
   "protobuf -> a legacyStyleMessage record. Absent fields are nil."
   ([msg] (proto->legacyStyleMessage msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (if (and (nil? opts) (instance? com.acme.fixtures.e2024legacy.legacyStyleMessage msg))
+   (cond
+     (and (nil? opts) (instance? com.acme.fixtures.e2024legacy.legacyStyleMessage msg))
      (let [^com.acme.fixtures.e2024legacy.legacyStyleMessage m msg]
        (->legacyStyleMessage
         (when (.hasCamelCaseField m) (.getCamelCaseField m))
@@ -64,6 +65,17 @@
         (when (.hasX m) (.getX m))
         (when (.hasHttp2Server m) (.getHttp2Server m))
         ))
+
+     (and (nil? opts) (rt/compiled-message? msg))
+     (->legacyStyleMessage
+      (rt/slot msg 0)
+      (rt/slot msg 1)
+      (rt/slot msg 2)
+      (rt/slot msg 3)
+      (rt/slot msg 4)
+      )
+
+     :else
      (->legacyStyleMessage
       (codec/get-field msg legacyStyleMessage--camel-case-field opts)
       (codec/get-field msg legacyStyleMessage--upper-snake-field opts)

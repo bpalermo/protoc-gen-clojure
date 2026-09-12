@@ -18,6 +18,7 @@
 
 ;; ---------------------------------------------------------------
 ;; messages
+(declare proto->Nested--slot-map)
 ;;
 ;; The shape is known at codegen time, so the representation is too:
 ;; a defrecord per type, its FieldDescriptors resolved once into
@@ -40,9 +41,18 @@
   "protobuf -> a Nested record. Absent fields are nil."
   ([msg] (proto->Nested msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->Nested
-    (codec/get-field msg Nested--id opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->Nested
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      )
+     (->Nested
+      (codec/get-field msg Nested--id opts)
+      ))))
+(defn- proto->Nested--slot-map
+  "Nested as a plain map, read from the compiled arm's slots:
+  the same values, minus the keys the codec's read leaves out."
+  [msg]
+  {:id (let [v (rt/slot msg 0)] (if (nil? v) "" v))})
 
 (defrecord Kitchen [str-field int-field bool-field bytes-field dbl-field long-field enum-field msg-field tags children counts choice-str choice-int choice-msg ts dur wrapped opt-str opt-int])
 (def Kitchen-prototype (rt/message file-descriptor "Kitchen" "com.acme.fixtures.p3.Kitchen"))
@@ -95,24 +105,46 @@
   "protobuf -> a Kitchen record. Absent fields are nil."
   ([msg] (proto->Kitchen msg nil))
   ([^com.google.protobuf.Message msg opts]
-   (->Kitchen
-    (codec/get-field msg Kitchen--str-field opts)
-    (codec/get-field msg Kitchen--int-field opts)
-    (codec/get-field msg Kitchen--bool-field opts)
-    (codec/get-field msg Kitchen--bytes-field opts)
-    (codec/get-field msg Kitchen--dbl-field opts)
-    (codec/get-field msg Kitchen--long-field opts)
-    (codec/get-field msg Kitchen--enum-field opts)
-    (codec/get-field msg Kitchen--msg-field opts)
-    (codec/get-field msg Kitchen--tags opts)
-    (codec/get-field msg Kitchen--children opts)
-    (codec/get-field msg Kitchen--counts opts)
-    (codec/get-field msg Kitchen--choice-str opts)
-    (codec/get-field msg Kitchen--choice-int opts)
-    (codec/get-field msg Kitchen--choice-msg opts)
-    (codec/get-field msg Kitchen--ts opts)
-    (codec/get-field msg Kitchen--dur opts)
-    (codec/get-field msg Kitchen--wrapped opts)
-    (codec/get-field msg Kitchen--opt-str opts)
-    (codec/get-field msg Kitchen--opt-int opts)
-    )))
+   (if (and (nil? opts) (rt/compiled-message? msg))
+     (->Kitchen
+      (let [v (rt/slot msg 0)] (if (nil? v) "" v))
+      (let [v (rt/slot msg 1)] (if (nil? v) (int 0) v))
+      (let [v (rt/slot msg 2)] (if (nil? v) false v))
+      (let [v (rt/slot msg 3)] (if (nil? v) (byte-array 0) (.toByteArray ^com.google.protobuf.ByteString v)))
+      (let [v (rt/slot msg 4)] (if (nil? v) 0.0 v))
+      (let [v (rt/slot msg 5)] (if (nil? v) 0 v))
+      (let [v (rt/slot msg 6)] (if (nil? v) :COLOR_UNSPECIFIED (case v 0 :COLOR_UNSPECIFIED 1 :COLOR_RED 2 :COLOR_BLUE (codec/get-field msg Kitchen--enum-field nil))))
+      (when-some [v (rt/slot msg 7)] (proto->Nested--slot-map v))
+      (let [^java.util.List l (rt/slot msg 8)] (when (and l (pos? (.size l))) (vec l)))
+      (let [^java.util.List l (rt/slot msg 9)] (when (and l (pos? (.size l))) (persistent! (reduce (fn [acc v] (conj! acc (proto->Nested--slot-map v))) (transient []) l))))
+      (let [^java.util.Map jm (rt/slot msg 10)] (when (and jm (pos? (.size jm))) (persistent! (reduce (fn [acc ^java.util.Map$Entry e] (assoc! acc (.getKey e) (.getValue e))) (transient {}) (.entrySet jm)))))
+      (rt/slot msg 11)
+      (rt/slot msg 12)
+      (when-some [v (rt/slot msg 13)] (proto->Nested--slot-map v))
+      (codec/get-field msg Kitchen--ts nil)
+      (codec/get-field msg Kitchen--dur nil)
+      (codec/get-field msg Kitchen--wrapped nil)
+      (rt/slot msg 17)
+      (rt/slot msg 18)
+      )
+     (->Kitchen
+      (codec/get-field msg Kitchen--str-field opts)
+      (codec/get-field msg Kitchen--int-field opts)
+      (codec/get-field msg Kitchen--bool-field opts)
+      (codec/get-field msg Kitchen--bytes-field opts)
+      (codec/get-field msg Kitchen--dbl-field opts)
+      (codec/get-field msg Kitchen--long-field opts)
+      (codec/get-field msg Kitchen--enum-field opts)
+      (codec/get-field msg Kitchen--msg-field opts)
+      (codec/get-field msg Kitchen--tags opts)
+      (codec/get-field msg Kitchen--children opts)
+      (codec/get-field msg Kitchen--counts opts)
+      (codec/get-field msg Kitchen--choice-str opts)
+      (codec/get-field msg Kitchen--choice-int opts)
+      (codec/get-field msg Kitchen--choice-msg opts)
+      (codec/get-field msg Kitchen--ts opts)
+      (codec/get-field msg Kitchen--dur opts)
+      (codec/get-field msg Kitchen--wrapped opts)
+      (codec/get-field msg Kitchen--opt-str opts)
+      (codec/get-field msg Kitchen--opt-int opts)
+      ))))

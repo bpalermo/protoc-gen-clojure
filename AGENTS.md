@@ -81,6 +81,19 @@ verbatim (base64) and lets protobuf-java's `FileDescriptor/buildFrom` resolve
 edition features at load time. That's why a new edition needs no codegen change.
 Keep it that way.
 
+**Generated code has an unconditional clj-protobuf floor from 0.7.0.** The
+default `proto->X` reads the compiled arm's slots (`rt/slot`, guarded by
+`rt/compiled-message?`), which those versions introduced. Two things follow.
+The slot INDEX is baked as a literal, which is only sound because clj-protobuf
+guarantees it is the field's declaration index — `check-slot-indices!` compares
+the emitter's own field position against `(.getIndex fd)` on the built
+descriptor, two sources for one number, and refuses the file if they disagree.
+And nothing emitted for that arm may type-hint a class clj-protobuf defines:
+generated code that did would break on that library's plain-clj leg, where its
+namespaces reload in one JVM. The Java-hinted `--map` sibling is therefore
+emitted only under `interop=true`; the default gets `--slot-map`, whose
+parameter is unhinted.
+
 That rule is about not owning a defaults table, not about never seeing a resolved
 descriptor. `interop=true`'s typed read path has to know, at codegen time, whether
 a field has presence and whether an enum is open — emit `(when (.hasX m) …)` where

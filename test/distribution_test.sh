@@ -123,7 +123,27 @@ diff -u out-protoc/demo/hello.clj out-buf/demo/hello.clj ||
   }
 echo "OK: protoc and buf agree byte for byte"
 
-echo "=== 5. interop=true, the arms whose names the plugin derives"
+echo "=== 5. the compiled arm's typed read, which is now the default"
+# The default emission reads clj-protobuf's compiled message through rt/slot,
+# which is what sets the 0.3.0 runtime floor. It must NOT name a Java class
+# anywhere a hint would be resolved at load: that is interop=true's contract,
+# not the default's.
+grep -q '(rt/compiled-message? msg)' out-protoc/demo/hello.clj || {
+  echo "FAIL: the default output has no compiled-arm typed read" >&2
+  exit 1
+}
+grep -q '(rt/slot msg 0)' out-protoc/demo/hello.clj || {
+  echo "FAIL: the default output bakes no slot index" >&2
+  exit 1
+}
+if grep -qE '\^demo\.Hello|instance\? demo\.Hello' out-protoc/demo/hello.clj; then
+  echo "FAIL: the DEFAULT output names the generated Java class; that would put" >&2
+  echo "      protoc's Java on every consumer's classpath at load" >&2
+  exit 1
+fi
+echo "OK: default output reads slots and names no Java class"
+
+echo "=== 6. interop=true, the arms whose names the plugin derives"
 # The native image is the reason this step exists rather than a bazel test: the
 # interop arms are the only emitter path that reads RESOLVED descriptors, and an
 # unhinted call there works on the JVM and dies in the image with "No matching

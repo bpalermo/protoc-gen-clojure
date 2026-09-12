@@ -654,6 +654,177 @@
                    (str "(when (.has" acc " m) " core ")")
                    core)})))))
 
+;; ---------------------------------------------------------------------------
+;; the compiled-arm READ path
+;;
+;; The same idea as the interop read above, for the arm that has no generated
+;; Java classes: a consumer who runs protoc but not javac. There the prototype is
+;; clj-protobuf's own compiled message, whose fields live in a slot array, and
+;; from 0.3.0 the runtime exposes three symbols that let generated code read it
+;; directly — rt/compiled-message?, rt/slot, rt/slot-of — with the slot's
+;; contents a documented contract per kind.
+;;
+;; This path is emitted by DEFAULT, which the interop one is not, so two of its
+;; properties are load-bearing:
+;;
+;;   IT SETS THE RUNTIME FLOOR. Every file emitting a slot read requires
+;;   clj-protobuf 0.3.0. The earlier floors (0.1.3 for the Java-class hint, 0.1.5
+;;   for a dotted nested lookup) bind only the files that use them; this one binds
+;;   every regenerated file. That is a deliberate decision, not an accident.
+;;
+;;   THE INDEX IS BAKED. rt/slot takes the field's DECLARATION INDEX, which
+;;   clj-protobuf guarantees as public contract from 0.3.0 — never a field number,
+;;   never an internal ordering — so the emitter writes the literal rather than
+;;   calling rt/slot-of at load. check-slot-indices! below is what keeps that
+;;   honest from this side.
+;;
+;; Two constraints come from the runtime and neither is cosmetic. rt/slot is
+;; called as a plain fn on Object and NOTHING here hints a class clj-protobuf
+;; defines: generated code that did would break on that library's plain-clj leg,
+;; where its namespaces reload in one JVM. And every slot read is guarded by
+;; rt/compiled-message?, because rt/slot deliberately does not check — a message
+;; from another arm throws rather than answering.
+;;
+;; It reaches shapes the interop path cannot. A group-like field is an ordinary
+;; message slot here, because there are no Java accessors to name it after, and a
+;; message whose Java class name could not be derived converts fine, because the
+;; sibling takes the nested compiled message rather than a hinted class.
+
+(defn- local-slot-record
+  "The record name for a message-typed field this file can convert itself, or
+  nil for a cross-file type. No Java class is required, unlike the interop path."
+  [^Descriptors$FieldDescriptor fd local-messages]
+  (when (= Descriptors$FieldDescriptor$JavaType/MESSAGE (.getJavaType fd))
+    (:record (get local-messages (.getFullName (.getMessageType fd))))))
+
+(defn- slot-conv
+  "How one slot value converts to the Clojure value the codec would return: a
+  function from the expression producing it, `identity` when the slot already
+  holds it — which is most fields, and the reason this path is fast — or nil
+  when the kind has no fast spelling."
+  [^Descriptors$FieldDescriptor fd local-messages]
+  (let [jt (.getJavaType fd)]
+    (cond
+      (contains? read-plain-java-types jt) identity
+
+      (= Descriptors$FieldDescriptor$JavaType/BYTE_STRING jt)
+      #(str "(.toByteArray ^com.google.protobuf.ByteString " % ")")
+
+      ;; Enums inside a collection stay on the codec, for the reason the interop
+      ;; path gives: an undeclared number has no per-element fallback short of
+      ;; reproducing protobuf's synthetic naming.
+      :else
+      (when-let [r (local-slot-record fd local-messages)]
+        #(str "(proto->" r "--slot-map " % ")")))))
+
+(defn- implicit-default-literal
+  "What a field with IMPLICIT presence reads back as when its slot is nil, as
+  source. A nil slot means `the default` there rather than `absent`, and the
+  codec substitutes the descriptor's default and converts it; this bakes the
+  converted form. Implicit presence forbids an explicit default, so every one of
+  these is the type's zero — but the TYPE matters: the codec hands back the
+  Integer and Float protobuf-java declares, so `0` and `0.0`, which are Long and
+  Double in Clojure, would be equal but not identical in kind."
+  [^Descriptors$FieldDescriptor fd]
+  (condp = (.getJavaType fd)
+    Descriptors$FieldDescriptor$JavaType/INT     "(int 0)"
+    Descriptors$FieldDescriptor$JavaType/LONG    "0"
+    Descriptors$FieldDescriptor$JavaType/FLOAT   "(float 0.0)"
+    Descriptors$FieldDescriptor$JavaType/DOUBLE  "0.0"
+    Descriptors$FieldDescriptor$JavaType/BOOLEAN "false"
+    Descriptors$FieldDescriptor$JavaType/STRING  "\"\""
+    Descriptors$FieldDescriptor$JavaType/BYTE_STRING "(byte-array 0)"
+    Descriptors$FieldDescriptor$JavaType/ENUM
+    (str ":" (.getName ^Descriptors$EnumValueDescriptor (.getDefaultValue fd)))
+    nil))
+
+(defn- slot-read-info
+  "How the compiled arm's read spells one field — the same {:expr :always?
+  :sibling} the interop read returns — or nil when the field stays on the codec.
+  `msg` is the message in the emitted code, on both the record fn and the
+  map-building sibling, so the expression needs no source parameter."
+  [^Descriptors$FieldDescriptor fd local-messages ^String var-name ^long idx]
+  (let [jt   (.getJavaType fd)
+        slot (str "(rt/slot msg " idx ")")]
+    (cond
+      (.isMapField fd)
+      (let [vfd  (.findFieldByName (.getMessageType fd) "value")
+            conv (slot-conv vfd local-messages)]
+        (when conv
+          {:always? false
+           :sibling (local-slot-record vfd local-messages)
+           ;; java.util.Map is a JDK type, so hinting the local is allowed where
+           ;; hinting clj-protobuf's own is not. A nil slot and an empty map both
+           ;; mean the same nil, which is what the codec reads an empty map as.
+           :expr (str "(let [^java.util.Map jm " slot "] (when (and jm (pos? (.size jm))) "
+                      "(persistent! (reduce (fn [acc ^java.util.Map$Entry e]"
+                      " (assoc! acc (.getKey e) " (conv "(.getValue e)") "))"
+                      " (transient {}) (.entrySet jm)))"
+                      "))")}))
+
+      (.isRepeated fd)
+      (let [conv (slot-conv fd local-messages)]
+        (when conv
+          {:always? false
+           :sibling (local-slot-record fd local-messages)
+           :expr (str "(let [^java.util.List l " slot "] (when (and l (pos? (.size l))) "
+                      (if (identical? identity conv)
+                        "(vec l)"
+                        (str "(persistent! (reduce (fn [acc v] (conj! acc "
+                             (conv "v") ")) (transient []) l))"))
+                      "))")}))
+
+      :else
+      (let [record (local-slot-record fd local-messages)
+            conv   (cond
+                     (contains? read-plain-java-types jt) identity
+
+                     (= Descriptors$FieldDescriptor$JavaType/BYTE_STRING jt)
+                     #(str "(.toByteArray ^com.google.protobuf.ByteString " % ")")
+
+                     (= Descriptors$FieldDescriptor$JavaType/ENUM jt)
+                     (let [^Descriptors$EnumDescriptor ed (.getEnumType fd)]
+                       (when-let [clauses (enum-clauses ed)]
+                         ;; The slot holds the number, so there is no getXValue
+                         ;; question here and open and closed enums read alike.
+                         #(str "(case " % " " clauses
+                               " (codec/get-field msg " var-name " nil))")))
+
+                     record #(str "(proto->" record "--slot-map " % ")"))]
+        (when conv
+          (let [presence? (.hasPresence fd)
+                identity? (identical? identity conv)]
+            {:always? (not presence?)
+             :sibling record
+             :expr
+             (cond
+               ;; nil passes straight through as absent
+               (and presence? identity?) slot
+               presence? (str "(when-some [v " slot "] " (conv "v") ")")
+               :else
+               (str "(let [v " slot "] (if (nil? v) "
+                    (implicit-default-literal fd) " "
+                    (if identity? "v" (conv "v")) "))"))}))))))
+
+(defn- check-slot-indices!
+  "Refuse to bake a slot index the descriptor does not agree with.
+
+  The emitter walks `(.getFieldList md)` and uses a field's POSITION there as its
+  slot; clj-protobuf's contract is the field's declaration index, which
+  protobuf-java reports as `(.getIndex fd)` on the separately built descriptor.
+  Those are two sources for one number, so comparing them is a real check rather
+  than a value compared against itself — which is exactly why clj-protobuf
+  declined the mirror-image assertion at handle construction, where it would
+  pass forever including in the failure it exists to catch."
+  [^DescriptorProtos$FileDescriptorProto fdp ^String lookup ^Descriptors$Descriptor rd]
+  (doseq [[i ^Descriptors$FieldDescriptor fd] (map-indexed vector (.getFields rd))]
+    (when-not (= i (.getIndex fd))
+      (throw (ex-info (str "slot index disagreement in " (.getName fdp) ": field "
+                           (.getName fd) " of " lookup " is at position " i
+                           " but reports declaration index " (.getIndex fd)
+                           ". The compiled arm's slot would read another field.")
+                      {:file (.getName fdp) :message lookup :field (.getName fd)})))))
+
 (defn- message-tree
   "Every message declared in `fdp`, each enclosing type before the types nested in
   it, as the maps the emitter renders. Map-entry types are skipped, at every level
@@ -679,23 +850,28 @@
           (walk [^DescriptorProtos$DescriptorProto md path locals
                  ^Descriptors$Descriptor rd]
             (let [path  (conj path (.getName md))
-                  mname (record-name path)]
+                  mname (record-name path)
+                  ;; Every message, nested ones included, before a single slot
+                  ;; index is baked from this descriptor.
+                  _     (when rd (check-slot-indices! fdp (str/join "." path) rd))]
               (cons {:record-name mname
                      :lookup-name (str/join "." path)
                      :java-class  (java-class-name fdp md path)
-                     :fields      (mapv (fn [^DescriptorProtos$FieldDescriptorProto f]
-                                          (let [k (field-key-symbol (.getName f))]
+                     :fields      (mapv (fn [i ^DescriptorProtos$FieldDescriptorProto f]
+                                          (let [k   (field-key-symbol (.getName f))
+                                                ;; Spelled out rather than threaded: every
+                                                ;; interop call in this file has to resolve at
+                                                ;; compile time or the native image dies on it.
+                                                rfd (when rd (.findFieldByName rd (.getName f)))]
                                             {:proto-name (.getName f)
                                              :key        k
                                              :setter     (str "set" (accessor-suffix (.getName f)))
                                              :interop    (interop-field-info f locals)
-                                             ;; Spelled out rather than threaded: every
-                                             ;; interop call in this file has to resolve at
-                                             ;; compile time or the native image dies on it.
-                                             :read       (when rd
-                                                           (when-let [rfd (.findFieldByName rd (.getName f))]
-                                                             (read-info rfd locals (str mname "--" k))))}))
-                                        (.getFieldList md))}
+                                             :read       (when rfd
+                                                           (read-info rfd locals (str mname "--" k)))
+                                             :slot-read  (when rfd
+                                                           (slot-read-info rfd locals (str mname "--" k) i))}))
+                                        (range) (.getFieldList md))}
                     (mapcat (fn [^DescriptorProtos$DescriptorProto n]
                               (walk n path locals
                                     (when rd (.findNestedTypeByName rd (.getName n)))))
@@ -826,7 +1002,7 @@
    (emit-namespace fdp generated? prefix keep-source-info? rt-ns false))
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns interop?]
    (emit-namespace fdp generated? prefix keep-source-info? rt-ns interop?
-                   (when interop? (try-resolve fdp))))
+                   (try-resolve fdp)))
   ([^DescriptorProtos$FileDescriptorProto fdp generated? prefix keep-source-info? rt-ns interop?
     ^Descriptors$FileDescriptor resolved]
   (let [ns-name (proto->ns (.getName fdp) prefix)
@@ -838,11 +1014,28 @@
                   fdp
                   (-> (.toBuilder fdp) (.clearSourceCodeInfo) (.build)))
         b64     (.encodeToString (Base64/getEncoder) (.toByteArray embed))
-        msgs    (message-tree fdp (when interop? resolved))
+        ;; Resolved for EVERY file now, not only interop ones: the compiled
+        ;; arm's typed read is emitted by default and needs the same answers.
+        msgs    (message-tree fdp resolved)
         ;; Which messages need the private map-building read: exactly those some
         ;; typed read calls for a nested field. Emitting one per message would
         ;; double the file for nothing.
-        siblings (into #{} (comp (mapcat :fields) (keep (comp :sibling :read))) msgs)
+        ;; Two sets, not one: a field the interop arm cannot spell may still be
+        ;; readable from a slot — a group-like field is the standard case — so
+        ;; the two arms do not nest the same messages. Keyed on being REFERENCED
+        ;; and nothing else: a message whose own fields all fall back to the
+        ;; codec, or which has no fields at all, is still a legitimate nested
+        ;; type, and skipping its sibling would leave the caller calling a
+        ;; declared-but-undefined fn.
+        ;; Empty unless interop is on: this sibling HINTS the generated Java
+        ;; class in its parameter, and a hint is resolved when the namespace
+        ;; loads — emitting one in a default file would put protoc's Java on
+        ;; every consumer's classpath, which is the whole thing interop=true
+        ;; exists to opt into.
+        siblings-java (if interop?
+                        (into #{} (comp (mapcat :fields) (keep (comp :sibling :read))) msgs)
+                        #{})
+        siblings-slot (into #{} (comp (mapcat :fields) (keep (comp :sibling :slot-read))) msgs)
         ;; The type hint is load-bearing, not tidiness. Unhinted, this compiles to
         ;; a reflective call that works fine on the JVM and fails in the native
         ;; image, where no reflection metadata is registered:
@@ -878,17 +1071,19 @@
       (line "")
       (line ";; ---------------------------------------------------------------")
       (line ";; messages")
-      (when interop?
-        ;; The interop arms call sibling fns for message-typed fields — ->proto
-        ;; on the way in, the private map-building read on the way out — and
-        ;; declaration order is proto order, so forward references need
-        ;; declaring. The codec arm never references siblings, which is why
-        ;; this did not exist before.
-        (line (str "(declare "
-                   (str/join " " (concat (map #(str (:record-name %) "->proto") msgs)
-                                         (map #(str "proto->" % "--map")
-                                              (filter siblings (map :record-name msgs)))))
-                   ")")))
+      ;; Typed arms call sibling fns for message-typed fields — ->proto on the
+      ;; way in, a private map-building read on the way out — and declaration
+      ;; order is proto order, so forward references need declaring. Only the
+      ;; codec arm references no siblings, which is why this did not exist
+      ;; before either arm did.
+      (let [decls (concat (when interop?
+                            (map #(str (:record-name %) "->proto") msgs))
+                          (map #(str "proto->" % "--map")
+                               (filter siblings-java (map :record-name msgs)))
+                          (map #(str "proto->" % "--slot-map")
+                               (filter siblings-slot (map :record-name msgs))))]
+        (when (seq decls)
+          (line (str "(declare " (str/join " " decls) ")"))))
       (line ";;")
       (line ";; The shape is known at codegen time, so the representation is too:")
       (line ";; a defrecord per type, its FieldDescriptors resolved once into")
@@ -973,6 +1168,7 @@
               (line (str "     (codec/set-field! b " msg-name "--" key " (:" key " m) opts)")))
             (line  "     (.build b))))")))
         (let [typed-read? (boolean (and interop? java-class (some :read fields)))
+              slot-read?  (boolean (some :slot-read fields))
               ;; The codec read of one field, for a field the fast arm cannot
               ;; spell. `from` is the message local: `m` inside the typed arm.
               codec-read  (fn [from key opts] (str "(codec/get-field " from " " msg-name "--" key
@@ -981,29 +1177,51 @@
           (line (str "  \"protobuf -> a " msg-name " record. Absent fields are nil.\""))
           (line (str "  ([msg] (proto->" msg-name " msg nil))"))
           (line  "  ([^com.google.protobuf.Message msg opts]")
-          (if typed-read?
-            (do
-              ;; `instance?` and not just `(nil? opts)`, unlike ->proto: this arm
-              ;; reads one concrete class's own accessors, and proto->X accepts
-              ;; any Message. A DynamicMessage — or a message from the compiled
-              ;; codec — must still decode, so the class check is what keeps
-              ;; interop=true a pure optimisation rather than a narrowing of what
-              ;; the fn accepts. It compiles to an instanceof.
-              (line (str "   (if (and (nil? opts) (instance? " java-class " msg))"))
-              (line (str "     (let [^" java-class " m msg]"))
-              (line (str "       (->" msg-name))
-              (doseq [{:keys [key read]} fields]
-                (line (str "        " (or (:expr read) (codec-read "m" key "nil")))))
-              (line  "        ))")
-              (line (str "     (->" msg-name))
-              (doseq [{:keys [key]} fields]
-                (line (str "      " (codec-read "msg" key "opts"))))
-              (line  "      ))))"))
-            (do
-              (line (str "   (->" msg-name))
-              (doseq [{:keys [key]} fields]
-                (line (str "    " (codec-read "msg" key "opts"))))
-              (line  "    )))")))
+          ;; Up to three arms, in the order a message is cheapest to read:
+          ;; the generated Java class, then the compiled codec's slots, then the
+          ;; codec itself — which is also where any non-nil opts goes, because
+          ;; every opts semantic belongs to the codec and only to it.
+          (let [ctor (fn [indent exprs closing]
+                       (line (str indent "(->" msg-name))
+                       (doseq [e exprs] (line (str indent " " e)))
+                       (line (str indent " " closing)))
+                codec-arm (map #(codec-read "msg" (:key %) "opts") fields)
+                slot-arm  (map #(or (:expr (:slot-read %))
+                                    (codec-read "msg" (:key %) "nil")) fields)]
+            (cond
+              (and typed-read? slot-read?)
+              (do
+                ;; `instance?` and not just `(nil? opts)`: this arm reads one
+                ;; concrete class's own accessors, and proto->X accepts any
+                ;; Message. It compiles to an instanceof.
+                (line (str "   (cond"))
+                (line (str "     (and (nil? opts) (instance? " java-class " msg))"))
+                (line (str "     (let [^" java-class " m msg]"))
+                (ctor "       " (map #(or (:expr (:read %))
+                                          (codec-read "m" (:key %) "nil")) fields) "))")
+                (line  "")
+                (line  "     (and (nil? opts) (rt/compiled-message? msg))")
+                (ctor "     " slot-arm ")")
+                (line  "")
+                (line  "     :else")
+                (ctor "     " codec-arm "))))"))
+
+              typed-read?
+              (do
+                (line (str "   (if (and (nil? opts) (instance? " java-class " msg))"))
+                (line (str "     (let [^" java-class " m msg]"))
+                (ctor "       " (map #(or (:expr (:read %))
+                                          (codec-read "m" (:key %) "nil")) fields) "))")
+                (ctor "     " codec-arm "))))"))
+
+              slot-read?
+              (do
+                (line  "   (if (and (nil? opts) (rt/compiled-message? msg))")
+                (ctor "     " slot-arm ")")
+                (ctor "     " codec-arm "))))"))
+
+              :else
+              (ctor "   " codec-arm ")))")))
           ;; The map-building read, private, emitted only for a message some
           ;; other message nests. A nested message reads back as a plain map on
           ;; the codec path — the runtime cannot know the record classes — and a
@@ -1017,61 +1235,63 @@
           ;; codec — or one with no fields at all — is still a legitimate nested
           ;; type, and skipping it here would leave the caller with a call to a
           ;; declared-but-undefined fn.
-          (when (and interop? java-class (contains? siblings msg-name))
-            (let [always (filterv (comp :always? :read) fields)
-                  conds  (filterv (complement (comp :always? :read)) fields)
-                  ;; One entry of the map literal: a field with no absence
-                  ;; inlines its read, a conditional one names the local the
-                  ;; enclosing let bound it to.
-                  pair   (fn [{:keys [key read]}]
-                           (str ":" key " " (if (:always? read) (:expr read) (str key "--v"))))
-                  lit    (fn [fs indent]
-                           (str "{" (str/join (str "\n" (apply str (repeat (inc indent) " ")))
-                                              (map pair fs))
-                                "}"))]
-              (line (str "(defn- proto->" msg-name "--map"))
-              (line (str "  \"" msg-name " as the plain map a nested field reads back as:"))
-              (line  "  the same values, minus the keys the codec's read leaves out.\"")
-              (line (str "  [^" java-class " m]"))
-              (cond
-                ;; Nothing to leave out: one literal, one allocation.
-                (empty? conds)
-                (line (str "  " (lit always 2) ")"))
+          (letfn [(sibling-fn
+                    [fn-name info-key params src docline]
+                    ;; One map-building sibling, over whichever read info the arm
+                    ;; uses. The two differ only in where a field's value comes
+                    ;; from and what the parameter is called; the shape that
+                    ;; decides the allocation is the same.
+                    (let [info   (fn [f] (get f info-key))
+                          always (filterv (comp :always? info) fields)
+                          conds  (filterv (complement (comp :always? info)) fields)
+                          pair   (fn [f]
+                                   (str ":" (:key f) " "
+                                        (if (:always? (info f)) (:expr (info f))
+                                            (str (:key f) "--v"))))
+                          lit    (fn [fs indent]
+                                   (str "{" (str/join (str "\n" (apply str (repeat (inc indent) " ")))
+                                                      (map pair fs))
+                                        "}"))]
+                      (line (str "(defn- " fn-name))
+                      (line (str "  \"" msg-name " " docline))
+                      (line  "  the same values, minus the keys the codec's read leaves out.\"")
+                      (line (str "  " params))
+                      (cond
+                        (empty? conds)
+                        (line (str "  " (lit always 2) ")"))
 
-                :else
-                (do
-                  (line (str "  (let [" (str/join "\n        "
-                                                  (map (fn [{:keys [key read]}]
-                                                         (str key "--v "
-                                                              (or (:expr read) (codec-read "m" key "nil"))))
-                                                       conds))
-                             "]"))
-                  ;; Everything present is the common case and the one worth
-                  ;; spending emitted code on: a literal builds the map in one
-                  ;; allocation, where a chain of `assoc` copies a growing array
-                  ;; per step — measured 72 B against 192 for three fields, and
-                  ;; 216 B against 672 for eight.
-                  (line (str "    (if "
-                             (let [tests (map #(str "(some? " (:key %) "--v)") conds)]
-                               (if (= 1 (count conds))
-                                 (first tests)
-                                 (str "(and " (str/join " " tests) ")")))))
-                  (line (str "      " (lit fields 6)))
-                  (if (= 1 (count conds))
-                    ;; One conditional field: "not all present" IS "absent", so
-                    ;; the other arm is the literal without it.
-                    (line (str "      " (lit always 6) ")))"))
-                    (do
-                      ;; Otherwise a transient: bounded at one map however many
-                      ;; fields are present, where the persistent chain's cost
-                      ;; grows with the square of that number — 1952 B against
-                      ;; 1040 at twelve. It loses ~100 B when almost nothing is
-                      ;; present, which is the trade this takes.
-                      (line  "      (persistent!")
-                      (line (str "       (cond-> (transient " (lit always 24) ")"))
-                      (doseq [{:keys [key]} conds]
-                        (line (str "         (some? " key "--v) (assoc! :" key " " key "--v)")))
-                      (line  "         )))))"))))))))))
+                        :else
+                        (do
+                          (line (str "  (let [" (str/join "\n        "
+                                                          (map (fn [f]
+                                                                 (str (:key f) "--v "
+                                                                      (or (:expr (info f))
+                                                                          (codec-read src (:key f) "nil"))))
+                                                               conds))
+                                     "]"))
+                          (line (str "    (if "
+                                     (let [tests (map #(str "(some? " (:key %) "--v)") conds)]
+                                       (if (= 1 (count conds))
+                                         (first tests)
+                                         (str "(and " (str/join " " tests) ")")))))
+                          (line (str "      " (lit fields 6)))
+                          (if (= 1 (count conds))
+                            (line (str "      " (lit always 6) ")))"))
+                            (do
+                              (line  "      (persistent!")
+                              (line (str "       (cond-> (transient " (lit always 24) ")"))
+                              (doseq [f conds]
+                                (line (str "         (some? " (:key f) "--v) (assoc! :" (:key f)
+                                           " " (:key f) "--v)")))
+                              (line  "         )))))")))))))]
+            (when (and (contains? siblings-java msg-name) java-class)
+              (sibling-fn (str "proto->" msg-name "--map") :read
+                          (str "[^" java-class " m]") "m"
+                          "as the plain map a nested field reads back as:"))
+            (when (contains? siblings-slot msg-name)
+              (sibling-fn (str "proto->" msg-name "--slot-map") :slot-read
+                          "[msg]" "msg"
+                          "as a plain map, read from the compiled arm's slots:"))))))
 
 
     (when (seq svcs)
@@ -1124,10 +1344,11 @@
         rt-ns     (runtime-namespaces params)
         to-gen    (set (.getFileToGenerateList req))
         generated? #(contains? to-gen %)
-        ;; Only interop=true's typed read path consults these, and building them
-        ;; is the one piece of work in this fn proportional to the whole request
-        ;; rather than to the files asked for.
-        resolved  (when interop? (resolve-files req))
+        ;; Both typed read paths consult these, and the compiled arm's is on by
+        ;; default, so this is no longer conditional. It is the one piece of work
+        ;; in this fn proportional to the whole request rather than to the files
+        ;; asked for.
+        resolved  (resolve-files req)
         resp      (PluginProtos$CodeGeneratorResponse/newBuilder)]
     (doseq [^DescriptorProtos$FileDescriptorProto fdp (.getProtoFileList req)
             :when (to-gen (.getName fdp))]
@@ -1149,7 +1370,7 @@
   "The released version. Single source of truth: the release workflow asserts
   this equals the tag rather than rewriting it, so a forgotten bump fails the
   release instead of shipping a binary that misreports itself."
-  "0.6.0")
+  "0.7.0")
 
 (defn -main
   "Read a CodeGeneratorRequest on stdin, write a CodeGeneratorResponse on stdout.
